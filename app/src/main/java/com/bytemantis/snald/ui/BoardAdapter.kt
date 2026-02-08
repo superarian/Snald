@@ -3,6 +3,7 @@ package com.bytemantis.snald.ui
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
@@ -22,8 +23,7 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
 
-        // 🛠️ OWNER FIX: Force every square to be exactly 1/10th of the board width.
-        // This prevents the "grid gaps" that make the token look misaligned.
+        // OWNER FIX: Force square height to 1/10th of width for perfect grid alignment
         view.layoutParams.height = parent.measuredWidth / 10
 
         return SquareViewHolder(view)
@@ -38,8 +38,6 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
         val bottomUpRow = 9 - row
 
         // 2. Standard Zig-Zag Logic
-        // Even rows (0, 2, 4...): Left to Right
-        // Odd rows (1, 3, 5...): Right to Left
         val squareNumber = if (bottomUpRow % 2 == 0) {
             (bottomUpRow * 10) + col + 1
         } else {
@@ -54,18 +52,27 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
         private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player)
 
         fun bind(number: Int, player: Player?) {
-            // Hide debug numbers (since your background has them)
+            // Hide debug numbers
             textNumber.visibility = View.GONE
 
             if (player != null && player.currentPosition == number) {
                 imagePlayer.visibility = View.VISIBLE
+
                 if (player.hasStar) {
+                    // 1. Turn Gold
                     imagePlayer.setColorFilter(0xFFFFD700.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+
+                    // 2. NEW: Play "Aura Pulse" Animation
+                    val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                    imagePlayer.startAnimation(pulse)
                 } else {
+                    // Reset to normal
                     imagePlayer.clearColorFilter()
+                    imagePlayer.clearAnimation()
                 }
             } else {
                 imagePlayer.visibility = View.GONE
+                imagePlayer.clearAnimation()
             }
         }
     }

@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/08/2026 18:30:01
+EXPORT DATE: 02/08/2026 20:40:22
 ============================================
 
 
@@ -15,32 +15,29 @@ package com.bytemantis.snald.logic
 object BoardConfig {
     const val BOARD_SIZE = 100
 
-    // 🐍 Snakes (Head -> Tail)
-    // "snake 1 goes from 29 to 10..."
+    // 🐍 Snakes (Head -> Tail) - CORRECTED
     val SNAKES = mapOf(
-        29 to 10,
-        52 to 32,
-        59 to 40,
-        81 to 61,
-        83 to 57,
-        88 to 85,
-        91 to 73,
-        95 to 3
+        95 to 3,   // Giant Red Cobra
+        91 to 73,  // Top Right Green Snake
+        88 to 85,  // Horizontal Gold Snake
+        83 to 57,  // Pink/Purple Snake
+        81 to 61,  // Top Left Green Snake
+        59 to 40,  // Mid-Left Red Snake
+        52 to 32,  // Mid-Right Blue Snake
+        29 to 10   // Bottom Right Green Snake
     )
 
-    // 🪜 Ladders (Bottom -> Top)
-    // "7 to 28..."
+    // 🪜 Ladders (Bottom -> Top) - CORRECTED
     val LADDERS = mapOf(
-        7 to 28,
-        19 to 58,
-        27 to 55,
-        48 to 75,
-        51 to 71,
-        62 to 98
+        62 to 98,  // Top Left Green Ladder
+        51 to 71,  // Top Right Pink Ladder
+        48 to 75,  // Mid-Right Blue Ladder
+        27 to 55,  // Center Green Ladder
+        19 to 58,  // Long Blue Ladder
+        7 to 28    // Bottom Right Ladder
     )
 
-    // ⭐ Stars (Hidden Numbers)
-    // "stars on these numbers..."
+    // ⭐ Stars (Immunity Pickup) - CORRECTED
     val STARS = setOf(20, 37, 54, 79, 94)
 }
 
@@ -145,7 +142,6 @@ package com.bytemantis.snald.ui
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
@@ -155,84 +151,62 @@ import com.bytemantis.snald.model.Player
 
 class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 
-    // This holds the current player data so we know where to draw them
     private var currentPlayer: Player? = null
 
-    // We refresh the board whenever the player moves
     fun updatePlayerState(player: Player) {
         this.currentPlayer = player
-        notifyDataSetChanged() // Refreshes the whole grid
+        notifyDataSetChanged()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
+
+        // 🛠️ OWNER FIX: Force every square to be exactly 1/10th of the board width.
+        // This prevents the "grid gaps" that make the token look misaligned.
+        view.layoutParams.height = parent.measuredWidth / 10
+
         return SquareViewHolder(view)
     }
 
-    override fun getItemCount(): Int = BoardConfig.BOARD_SIZE // Always 100
+    override fun getItemCount(): Int = BoardConfig.BOARD_SIZE
 
-    override fun onBindViewHolder(holder: SquareViewHolder, position: Int) { 
-        // 🧮 THE ZIG-ZAG ALGORITHM 
-        // This turns a boring grid index (0..99) into a real Snake & Ladder board coordinate. 
-        
-        val row = position / 10 
-        val col = position % 10 
-        
-        val squareNumber = if (row % 2 == 0) { 
-            // Even Rows (0, 2, 4...): Count Left to Right (Normal) 
-            // Wait! In S&L, usually Bottom is 1. 
-            // Let's stick to your layout (Top=1) but make it snake. 
-            // Actually, STANDARD S&L has 100 at Top-Left and 1 at Bottom-Left. 
-            // Let's invert the row to make 1 start at the bottom! 
-            
-            val invertedRow = 9 - row 
-            val realNumber = if (invertedRow % 2 == 0) { 
-                (invertedRow * 10) + col + 1 
-            } else { 
-                 // Odd Rows: Count Right to Left 
-                (invertedRow * 10) + (10 - col) 
-            } 
-            realNumber 
-        } else { 
-            // Fallback simple math if the above is too complex 
-            // Let's just fix the visual "Weirdness" first: 
-            // Real game: Row 0 is 100..91, Row 1 is 81..90 
-            val invertedRow = 9 - row 
-            if (invertedRow % 2 == 0) (invertedRow * 10) + col + 1 else (invertedRow * 10) + (10 - col) 
-        } 
- 
-        holder.bind(squareNumber, currentPlayer) 
+    override fun onBindViewHolder(holder: SquareViewHolder, position: Int) {
+        // 1. Calculate row from bottom (0 to 9)
+        val row = position / 10
+        val col = position % 10
+        val bottomUpRow = 9 - row
+
+        // 2. Standard Zig-Zag Logic
+        // Even rows (0, 2, 4...): Left to Right
+        // Odd rows (1, 3, 5...): Right to Left
+        val squareNumber = if (bottomUpRow % 2 == 0) {
+            (bottomUpRow * 10) + col + 1
+        } else {
+            (bottomUpRow * 10) + (10 - col)
+        }
+
+        holder.bind(squareNumber, currentPlayer)
     }
 
-    class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) { 
-        // We removed 'indicator_special' from XML, so we remove it here too. 
-        private val textNumber: TextView = itemView.findViewById(R.id.text_square_number) 
-        private val iconStar: TextView = itemView.findViewById(R.id.icon_star) 
-        private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player) 
- 
-        fun bind(number: Int, player: Player?) {
-            // 1. ALWAYS HIDE NUMBERS & STARS (Your background image has them!)
-            textNumber.visibility = View.GONE
-            iconStar.visibility = View.GONE
+    class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val textNumber: TextView = itemView.findViewById(R.id.text_square_number)
+        private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player)
 
-            // 2. SHOW PLAYER (Your Custom Token)
+        fun bind(number: Int, player: Player?) {
+            // Hide debug numbers (since your background has them)
+            textNumber.visibility = View.GONE
+
             if (player != null && player.currentPosition == number) {
                 imagePlayer.visibility = View.VISIBLE
-
                 if (player.hasStar) {
-                    val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                    imagePlayer.startAnimation(pulse)
                     imagePlayer.setColorFilter(0xFFFFD700.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
                 } else {
-                    imagePlayer.clearAnimation()
                     imagePlayer.clearColorFilter()
                 }
-
             } else {
                 imagePlayer.visibility = View.GONE
-                imagePlayer.clearAnimation()
             }
-        } 
+        }
     }
 }
 
@@ -818,38 +792,23 @@ FILE PATH: \app\src\main\res\layout\item_square.xml
 
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="40dp">
-
-    <TextView
-        android:id="@+id/text_square_number"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="start|top"
-        android:padding="2dp"
-        android:textColor="#000000"
-        android:textSize="10sp"
-        android:textStyle="bold"
-        tools:text="100" />
-
-    <TextView
-        android:id="@+id/icon_star"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:text="🌟"
-        android:textSize="22sp"
-        android:visibility="gone"/>
+    android:layout_height="match_parent"> <TextView
+    android:id="@+id/text_square_number"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:visibility="gone"
+    android:textColor="#000000"
+    android:textSize="10sp" />
 
     <ImageView
         android:id="@+id/image_player"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_gravity="center"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="2dp"
         android:src="@drawable/img_token_player"
-        android:visibility="gone"
-        tools:visibility="visible" />
+        android:visibility="gone" />
 
 </FrameLayout>
 
