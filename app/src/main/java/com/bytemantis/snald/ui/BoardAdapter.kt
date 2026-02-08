@@ -13,61 +13,54 @@ import com.bytemantis.snald.model.Player
 
 class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 
-    private var currentPlayer: Player? = null
+    private var playerList: List<Player> = emptyList()
 
-    fun updatePlayerState(player: Player) {
-        this.currentPlayer = player
+    fun updatePlayers(players: List<Player>) {
+        this.playerList = players
         notifyDataSetChanged()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
-
-        // OWNER FIX: Force square height to 1/10th of width for perfect grid alignment
         view.layoutParams.height = parent.measuredWidth / 10
-
         return SquareViewHolder(view)
     }
 
     override fun getItemCount(): Int = BoardConfig.BOARD_SIZE
 
     override fun onBindViewHolder(holder: SquareViewHolder, position: Int) {
-        // 1. Calculate row from bottom (0 to 9)
         val row = position / 10
         val col = position % 10
         val bottomUpRow = 9 - row
-
-        // 2. Standard Zig-Zag Logic
         val squareNumber = if (bottomUpRow % 2 == 0) {
             (bottomUpRow * 10) + col + 1
         } else {
             (bottomUpRow * 10) + (10 - col)
         }
 
-        holder.bind(squareNumber, currentPlayer)
+        holder.bind(squareNumber, playerList)
     }
 
     class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val textNumber: TextView = itemView.findViewById(R.id.text_square_number)
         private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player)
 
-        fun bind(number: Int, player: Player?) {
-            // Hide debug numbers
+        fun bind(number: Int, players: List<Player>) {
             textNumber.visibility = View.GONE
 
-            if (player != null && player.currentPosition == number) {
+            // Find if ANY player is on this square
+            val playerOnSquare = players.find { it.currentPosition == number && !it.isFinished }
+
+            if (playerOnSquare != null) {
                 imagePlayer.visibility = View.VISIBLE
 
-                if (player.hasStar) {
-                    // 1. Turn Gold
-                    imagePlayer.setColorFilter(0xFFFFD700.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+                // Set Color (Red, Blue, etc.)
+                imagePlayer.setColorFilter(playerOnSquare.color)
 
-                    // 2. NEW: Play "Aura Pulse" Animation
+                if (playerOnSquare.hasStar) {
                     val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
                     imagePlayer.startAnimation(pulse)
                 } else {
-                    // Reset to normal
-                    imagePlayer.clearColorFilter()
                     imagePlayer.clearAnimation()
                 }
             } else {

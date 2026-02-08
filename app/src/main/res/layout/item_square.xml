@@ -13,8 +13,8 @@
 
     <ImageView
         android:id="@+id/image_player"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
         android:layout_gravity="center"
         android:src="@drawable/img_token_player"
         android:visibility="gone" />

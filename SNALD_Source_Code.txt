@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/08/2026 21:13:08
+EXPORT DATE: 02/09/2026 01:38:41
 ============================================
 
 
@@ -56,54 +56,54 @@ class GameEngine {
     fun calculateMove(player: Player, diceValue: Int): MoveResult {
         var newPosition = player.currentPosition + diceValue
 
-        // Rule: Must land exactly on 100
         if (newPosition > BoardConfig.BOARD_SIZE) {
             return MoveResult.Stay(player.currentPosition, "Overshot!")
         }
 
-        // Win Condition
         if (newPosition == BoardConfig.BOARD_SIZE) {
-            player.currentPosition = 100
-            player.isWinner = true
-            return MoveResult.Win
+            // Player reached 100
+            return MoveResult.Win(newPosition)
         }
 
-        // 1. Check for Star (Immunity Pickup)
+        // 1. Check for Star
         if (BoardConfig.STARS.contains(newPosition)) {
-            player.currentPosition = newPosition
             player.hasStar = true
             return MoveResult.StarCollected(newPosition)
         }
 
-        // 2. Check for Snakes (Danger)
+        // 2. Check for Snakes
         if (BoardConfig.SNAKES.containsKey(newPosition)) {
             val snakeTail = BoardConfig.SNAKES[newPosition]!!
-
             if (player.hasStar) {
-                // CONSUME STAR - Block the bite!
-                player.hasStar = false
-                player.currentPosition = newPosition // Stay safe at head
+                player.hasStar = false // Consume Star
                 return MoveResult.StarUsed(newPosition, "Star Shield Used!")
             } else {
-                // OUCH - Go down
-                player.currentPosition = snakeTail
                 return MoveResult.SnakeBite(newPosition, snakeTail)
             }
         }
 
-        // 3. Check for Ladders (Boost)
+        // 3. Check for Ladders
         if (BoardConfig.LADDERS.containsKey(newPosition)) {
             val ladderTop = BoardConfig.LADDERS[newPosition]!!
-            player.currentPosition = ladderTop
             return MoveResult.LadderClimb(newPosition, ladderTop)
         }
 
-        // 4. Normal Move
-        player.currentPosition = newPosition
         return MoveResult.NormalMove(newPosition)
     }
 
-    // Tells the UI what to draw/animate
+    // NEW: Check if current player lands on enemies
+    fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
+        // Find any OTHER player on the same square (except at Start 1 or Goal 100)
+        if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
+
+        for (enemy in allPlayers) {
+            if (enemy.id != activePlayer.id && !enemy.isFinished && enemy.currentPosition == activePlayer.currentPosition) {
+                return enemy // This enemy is in danger!
+            }
+        }
+        return null
+    }
+
     sealed class MoveResult {
         data class NormalMove(val to: Int) : MoveResult()
         data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
@@ -111,7 +111,7 @@ class GameEngine {
         data class StarCollected(val at: Int) : MoveResult()
         data class StarUsed(val at: Int, val msg: String) : MoveResult()
         data class Stay(val at: Int, val reason: String) : MoveResult()
-        object Win : MoveResult()
+        data class Win(val at: Int) : MoveResult()
     }
 }
 
@@ -126,9 +126,10 @@ package com.bytemantis.snald.model
 data class Player(
     val id: Int,
     val name: String,
-    var currentPosition: Int = 1, // Everyone starts at square 1
-    var hasStar: Boolean = false, // The Immunity State
-    var isWinner: Boolean = false
+    val color: Int, // Hex Color Code
+    var currentPosition: Int = 1,
+    var hasStar: Boolean = false,
+    var isFinished: Boolean = false // True if they won and are waiting for others
 )
 
 
@@ -152,61 +153,54 @@ import com.bytemantis.snald.model.Player
 
 class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 
-    private var currentPlayer: Player? = null
+    private var playerList: List<Player> = emptyList()
 
-    fun updatePlayerState(player: Player) {
-        this.currentPlayer = player
+    fun updatePlayers(players: List<Player>) {
+        this.playerList = players
         notifyDataSetChanged()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
-
-        // OWNER FIX: Force square height to 1/10th of width for perfect grid alignment
         view.layoutParams.height = parent.measuredWidth / 10
-
         return SquareViewHolder(view)
     }
 
     override fun getItemCount(): Int = BoardConfig.BOARD_SIZE
 
     override fun onBindViewHolder(holder: SquareViewHolder, position: Int) {
-        // 1. Calculate row from bottom (0 to 9)
         val row = position / 10
         val col = position % 10
         val bottomUpRow = 9 - row
-
-        // 2. Standard Zig-Zag Logic
         val squareNumber = if (bottomUpRow % 2 == 0) {
             (bottomUpRow * 10) + col + 1
         } else {
             (bottomUpRow * 10) + (10 - col)
         }
 
-        holder.bind(squareNumber, currentPlayer)
+        holder.bind(squareNumber, playerList)
     }
 
     class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val textNumber: TextView = itemView.findViewById(R.id.text_square_number)
         private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player)
 
-        fun bind(number: Int, player: Player?) {
-            // Hide debug numbers
+        fun bind(number: Int, players: List<Player>) {
             textNumber.visibility = View.GONE
 
-            if (player != null && player.currentPosition == number) {
+            // Find if ANY player is on this square
+            val playerOnSquare = players.find { it.currentPosition == number && !it.isFinished }
+
+            if (playerOnSquare != null) {
                 imagePlayer.visibility = View.VISIBLE
 
-                if (player.hasStar) {
-                    // 1. Turn Gold
-                    imagePlayer.setColorFilter(0xFFFFD700.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+                // Set Color (Red, Blue, etc.)
+                imagePlayer.setColorFilter(playerOnSquare.color)
 
-                    // 2. NEW: Play "Aura Pulse" Animation
+                if (playerOnSquare.hasStar) {
                     val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
                     imagePlayer.startAnimation(pulse)
                 } else {
-                    // Reset to normal
-                    imagePlayer.clearColorFilter()
                     imagePlayer.clearAnimation()
                 }
             } else {
@@ -225,6 +219,7 @@ FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\GameViewModel.kt
 
 package com.bytemantis.snald.ui
 
+import android.graphics.Color
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -233,14 +228,15 @@ import com.bytemantis.snald.model.Player
 
 class GameViewModel : ViewModel() {
 
-    // The Engine Contractor (The Brain)
     private val engine = GameEngine()
 
-    // The State (What the UI sees)
-    // We use "LiveData" so the UI updates automatically when these change.
+    // List of all players
+    private val _players = MutableLiveData<List<Player>>()
+    val players: LiveData<List<Player>> = _players
 
-    private val _playerState = MutableLiveData<Player>()
-    val playerState: LiveData<Player> = _playerState
+    // ID of the player whose turn it is
+    private val _activePlayerId = MutableLiveData<Int>()
+    val activePlayerId: LiveData<Int> = _activePlayerId
 
     private val _lastMoveResult = MutableLiveData<GameEngine.MoveResult>()
     val lastMoveResult: LiveData<GameEngine.MoveResult> = _lastMoveResult
@@ -248,34 +244,103 @@ class GameViewModel : ViewModel() {
     private val _diceValue = MutableLiveData<Int>()
     val diceValue: LiveData<Int> = _diceValue
 
-    init {
-        // Start the game with Player 1
-        _playerState.value = Player(id = 1, name = "Player 1")
+    // Logic: Collided player needs to go back
+    private val _collisionEvent = MutableLiveData<Player?>() // Player who got killed
+    val collisionEvent: LiveData<Player?> = _collisionEvent
+
+    private val _gameOver = MutableLiveData<Boolean>()
+    val gameOver: LiveData<Boolean> = _gameOver
+
+    private var totalPlayers = 2
+    private var turnIndex = 0
+
+    fun startGame(playerCount: Int) {
+        totalPlayers = playerCount
+        val newPlayers = ArrayList<Player>()
+
+        // Setup Players with Colors
+        // P1: Red, P2: Blue, P3: Green, P4: Yellow
+        newPlayers.add(Player(1, "P1", Color.RED))
+        if (playerCount >= 2) newPlayers.add(Player(2, "P2", Color.BLUE))
+        if (playerCount >= 3) newPlayers.add(Player(3, "P3", Color.GREEN))
+        if (playerCount >= 4) newPlayers.add(Player(4, "P4", Color.YELLOW))
+
+        _players.value = newPlayers
+        turnIndex = 0
+        _activePlayerId.value = newPlayers[0].id
+        _gameOver.value = false
     }
 
-    // This is the ONLY function the UI is allowed to call.
-    fun rollDice() {
-        val currentPlayer = _playerState.value ?: return
-        if (currentPlayer.isWinner) return // Game Over, no more rolling
+    fun rollDiceForActivePlayer() {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
 
-        // 1. Roll the dice (Random 1-6)
+        if (activePlayer.isFinished) {
+            nextTurn()
+            return
+        }
+
         val rolledNumber = (1..6).random()
         _diceValue.value = rolledNumber
 
-        // 2. Ask the Contractor to calculate the result
-        val result = engine.calculateMove(currentPlayer, rolledNumber)
-
-        // 3. Update the LiveData (This triggers the UI to animate)
+        val result = engine.calculateMove(activePlayer, rolledNumber)
         _lastMoveResult.value = result
 
-        // Force the UI to refresh the player data
-        _playerState.value = currentPlayer
+        // Logic will be handled in UI (Animation), then updatePosition is called
     }
 
-    // Helper to reset game if needed
-    fun resetGame() {
-        _playerState.value = Player(id = 1, name = "Player 1")
-        _diceValue.value = 1
+    fun updatePositionAndNextTurn(finalPos: Int) {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+
+        // 1. Update Position
+        activePlayer.currentPosition = finalPos
+
+        // 2. Check Win
+        if (finalPos == 100) {
+            activePlayer.isFinished = true
+            // Check Game Over Condition (All finished except 1)
+            val activePlayersCount = currentList.count { !it.isFinished }
+            if (activePlayersCount <= 1) {
+                _gameOver.value = true
+            }
+        }
+
+        // 3. Check Collision (KILLING)
+        // If active player landed on enemy, and enemy has NO star
+        val enemy = engine.checkCollisions(activePlayer, currentList)
+        if (enemy != null) {
+            if (enemy.hasStar) {
+                // Enemy survives, loses star
+                enemy.hasStar = false
+                _collisionEvent.value = null // No kill, just update state
+            } else {
+                // KILL! Enemy goes to 1
+                enemy.currentPosition = 1
+                _collisionEvent.value = enemy
+            }
+        }
+
+        _players.value = currentList // Refresh UI
+
+        if (_gameOver.value != true) {
+            nextTurn()
+        }
+    }
+
+    private fun nextTurn() {
+        val currentList = _players.value ?: return
+        var nextIndex = (turnIndex + 1) % currentList.size
+
+        // Skip finished players
+        while (currentList[nextIndex].isFinished) {
+            nextIndex = (nextIndex + 1) % currentList.size
+            // Safety break if game is actually over
+            if (currentList.all { it.isFinished }) break
+        }
+
+        turnIndex = nextIndex
+        _activePlayerId.value = currentList[turnIndex].id
     }
 }
 
@@ -288,56 +353,48 @@ FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\SoundManager.kt
 package com.bytemantis.snald.ui
 
 import android.content.Context
-import android.media.MediaPlayer
+import android.media.AudioAttributes
+import android.media.SoundPool
 import com.bytemantis.snald.R
 
-class SoundManager(private val context: Context) {
+class SoundManager(context: Context) {
 
-    private var mediaPlayer: MediaPlayer? = null
+    private val soundPool: SoundPool
+    private val soundMap = mutableMapOf<Int, Int>()
 
-    // NEW: Dice Roll Sound
-    fun playDiceRoll() {
-        // MAKE SURE YOU HAVE 'sfx_dice_roll' in res/raw!
-        playSound(R.raw.sfx_dice_roll)
+    init {
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        soundPool = SoundPool.Builder()
+            .setMaxStreams(5) // Allow 5 sounds at once!
+            .setAudioAttributes(audioAttributes)
+            .build()
+
+        // Load sounds into memory
+        soundMap[R.raw.sfx_dice_roll] = soundPool.load(context, R.raw.sfx_dice_roll, 1)
+        soundMap[R.raw.sfx_hop] = soundPool.load(context, R.raw.sfx_hop, 1)
+        soundMap[R.raw.sfx_snake_bite] = soundPool.load(context, R.raw.sfx_snake_bite, 1)
+        soundMap[R.raw.sfx_ladder_climb] = soundPool.load(context, R.raw.sfx_ladder_climb, 1)
+        soundMap[R.raw.sfx_star_collect] = soundPool.load(context, R.raw.sfx_star_collect, 1)
+        soundMap[R.raw.sfx_star_use] = soundPool.load(context, R.raw.sfx_star_use, 1)
+        soundMap[R.raw.sfx_win] = soundPool.load(context, R.raw.sfx_win, 1)
     }
 
-    fun playSnakeBite() {
-        playSound(R.raw.sfx_snake_bite)
-    }
+    fun playDiceRoll() = play(R.raw.sfx_dice_roll)
+    fun playHop() = play(R.raw.sfx_hop)
+    fun playSnakeBite() = play(R.raw.sfx_snake_bite)
+    fun playLadderClimb() = play(R.raw.sfx_ladder_climb)
+    fun playStarCollect() = play(R.raw.sfx_star_collect)
+    fun playStarUsed() = play(R.raw.sfx_star_use)
+    fun playWin() = play(R.raw.sfx_win)
 
-    fun playLadderClimb() {
-        playSound(R.raw.sfx_ladder_climb)
-    }
-
-    fun playStarCollect() {
-        playSound(R.raw.sfx_star_collect)
-    }
-
-    fun playStarUsed() {
-        playSound(R.raw.sfx_star_use)
-    }
-
-    fun playWin() {
-        playSound(R.raw.sfx_win)
-    }
-
-    private fun playSound(resId: Int) {
-        // 1. Release previous sound to avoid overlapping chaos
-        mediaPlayer?.release()
-
-        // 2. Create and Start new sound
-        try {
-            mediaPlayer = MediaPlayer.create(context, resId)
-            mediaPlayer?.start()
-
-            // 3. Clean up when finished
-            mediaPlayer?.setOnCompletionListener {
-                it.release()
-                mediaPlayer = null
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    private fun play(resId: Int) {
+        val soundId = soundMap[resId] ?: return
+        // 1.0f = normal volume, 0 = no loop, 1.0f = normal speed
+        soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
     }
 }
 
@@ -350,129 +407,288 @@ FILE PATH: \app\src\main\java\com\bytemantis\snald\MainActivity.kt
 package com.bytemantis.snald
 
 import android.os.Bundle
+import android.view.View
+import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bytemantis.snald.logic.GameEngine
+import com.bytemantis.snald.model.Player
 import com.bytemantis.snald.ui.BoardAdapter
 import com.bytemantis.snald.ui.GameViewModel
 import com.bytemantis.snald.ui.SoundManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
     private val viewModel: GameViewModel by viewModels()
     private val adapter = BoardAdapter()
     private lateinit var soundManager: SoundManager
-    private lateinit var imgDice: ImageView
-    private lateinit var textStatus: TextView
+
+    // Dice Views Map (ID -> ImageView)
+    private lateinit var diceViews: Map<Int, ImageView>
+    private lateinit var statusText: TextView
+
+    // Overlays
+    private lateinit var textOverlayPop: TextView
+    private lateinit var imgOverlayPop: ImageView
+    private lateinit var setupLayout: LinearLayout
+    private lateinit var gameOverLayout: LinearLayout
+
+    private var isAnimatingMove = false
+    private var currentVisualPosition = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         soundManager = SoundManager(this)
 
-        // 1. Setup Board
+        setupUI()
+        setupObservers()
+    }
+
+    private fun setupUI() {
         val recycler = findViewById<RecyclerView>(R.id.recycler_board)
         recycler.layoutManager = GridLayoutManager(this, 10)
         recycler.adapter = adapter
 
-        // 2. Setup Controls
-        val btnRoll = findViewById<Button>(R.id.btn_roll)
-        val textDice = findViewById<TextView>(R.id.text_dice_result)
-        textStatus = findViewById(R.id.text_status)
-        imgDice = findViewById(R.id.img_dice)
+        diceViews = mapOf(
+            1 to findViewById(R.id.dice_p1),
+            2 to findViewById(R.id.dice_p2),
+            3 to findViewById(R.id.dice_p3),
+            4 to findViewById(R.id.dice_p4)
+        )
 
-        // 3. Observe Dice Value (THE MASTER CONTROLLER)
-        viewModel.diceValue.observe(this) { dice ->
-            // A. Lock UI & Start Feedback
-            btnRoll.isEnabled = false
-            textStatus.text = "Rolling..."
+        statusText = findViewById(R.id.text_main_status)
+        textOverlayPop = findViewById(R.id.text_overlay_pop)
+        imgOverlayPop = findViewById(R.id.img_overlay_pop)
+        setupLayout = findViewById(R.id.layout_setup)
+        gameOverLayout = findViewById(R.id.layout_game_over)
 
-            // NEW: Play Dice Sound immediately
-            soundManager.playDiceRoll()
-
-            // B. Animate Dice (Spin 2x)
-            imgDice.animate()
-                .rotationBy(720f)
-                .setDuration(500)
-                .withEndAction {
-                    // C. Animation Done: Show Result
-                    textDice.text = "Rolled: $dice 🎲"
-                    val resId = when (dice) {
-                        1 -> R.drawable.dice_1
-                        2 -> R.drawable.dice_2
-                        3 -> R.drawable.dice_3
-                        4 -> R.drawable.dice_4
-                        5 -> R.drawable.dice_5
-                        else -> R.drawable.dice_6
-                    }
-                    imgDice.setImageResource(resId)
-
-                    // D. NOW Trigger the Logic Result (Sound/Toast)
-                    // We fetch the *current* result from the ViewModel manually
-                    val result = viewModel.lastMoveResult.value
-                    handleMoveResult(result)
-
-                    // E. Unlock UI
-                    btnRoll.isEnabled = true
-                }
-                .start()
+        findViewById<Button>(R.id.btn_2_players).setOnClickListener { startGame(2) }
+        findViewById<Button>(R.id.btn_3_players).setOnClickListener { startGame(3) }
+        findViewById<Button>(R.id.btn_4_players).setOnClickListener { startGame(4) }
+        findViewById<Button>(R.id.btn_restart).setOnClickListener {
+            gameOverLayout.visibility = View.GONE
+            setupLayout.visibility = View.VISIBLE
         }
 
-        // 4. Observe Player (Just for Board Update)
-        viewModel.playerState.observe(this) { player ->
-            adapter.updatePlayerState(player)
-
-            // Update status text only if NOT rolling (avoid overwriting "Rolling...")
-            if (btnRoll.isEnabled) {
-                if (player.hasStar) {
-                    textStatus.text = "Player 1 (IMMUNE!) ⭐"
-                } else {
-                    textStatus.text = "Player 1's Turn"
+        diceViews.forEach { (id, view) ->
+            view.setOnClickListener {
+                if (!isAnimatingMove && viewModel.activePlayerId.value == id) {
+                    val player = viewModel.players.value?.find { it.id == id } ?: return@setOnClickListener
+                    currentVisualPosition = player.currentPosition
+                    isAnimatingMove = true
+                    viewModel.rollDiceForActivePlayer()
                 }
             }
-        }
-
-        // NOTE: We REMOVED the separate lastMoveResult observer.
-        // It is now handled inside the dice animation end action.
-
-        btnRoll.setOnClickListener {
-            viewModel.rollDice()
         }
     }
 
-    // Helper to handle sounds and toasts AFTER animation
+    private fun startGame(count: Int) {
+        setupLayout.visibility = View.GONE
+        findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
+        viewModel.startGame(count)
+    }
+
+    private fun setupObservers() {
+        // 1. Dice Roll
+        viewModel.diceValue.observe(this) { dice ->
+            val activeId = viewModel.activePlayerId.value ?: return@observe
+            val activeDiceView = diceViews[activeId] ?: return@observe
+
+            soundManager.playDiceRoll()
+            updateDiceImage(activeDiceView, dice)
+
+            resetDiceOpacity()
+            activeDiceView.alpha = 1.0f
+
+            activeDiceView.animate().rotationBy(720f).setDuration(500).withEndAction {
+                animateHoppingMovement(dice)
+            }.start()
+        }
+
+        // 2. Turn Change (Status Text & Highlights)
+        viewModel.activePlayerId.observe(this) { id ->
+            if (!isAnimatingMove) {
+                updateStatusText(id)
+                highlightActiveDice(id)
+            }
+        }
+
+        // 3. Collision (Kill)
+        viewModel.collisionEvent.observe(this) { killedPlayer ->
+            if (killedPlayer != null) {
+                soundManager.playSnakeBite()
+                triggerPopImage(R.drawable.img_snake_pop)
+                Toast.makeText(this, "P${killedPlayer.id} KILLED! Back to Start!", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 4. Game Over
+        viewModel.gameOver.observe(this) { isOver ->
+            if (isOver) {
+                soundManager.playWin()
+                triggerPopText("GAME OVER", 0xFFFFFFFF.toInt(), R.anim.pop_zoom_fade)
+                lifecycleScope.launch {
+                    delay(2000)
+                    gameOverLayout.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun updateStatusText(playerId: Int) {
+        statusText.text = "Player $playerId's Turn"
+        // Optional: Change text color based on player color
+        val color = when(playerId) {
+            1 -> 0xFFFF0000.toInt() // Red
+            2 -> 0xFF0000FF.toInt() // Blue
+            3 -> 0xFF00FF00.toInt() // Green
+            4 -> 0xFFFFFF00.toInt() // Yellow
+            else -> 0xFFFFFFFF.toInt()
+        }
+        statusText.setTextColor(color)
+    }
+
+    private fun highlightActiveDice(activeId: Int) {
+        diceViews.forEach { (id, view) ->
+            if (id == activeId) {
+                view.alpha = 1.0f
+                view.animate().scaleX(1.2f).scaleY(1.2f).setDuration(300).start()
+            } else {
+                view.alpha = 0.5f
+                view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(300).start()
+            }
+        }
+    }
+
+    private fun resetDiceOpacity() {
+        diceViews.values.forEach { it.alpha = 0.5f }
+    }
+
+    private fun updateDiceImage(view: ImageView, dice: Int) {
+        val resId = when (dice) {
+            1 -> R.drawable.dice_1
+            2 -> R.drawable.dice_2
+            3 -> R.drawable.dice_3
+            4 -> R.drawable.dice_4
+            5 -> R.drawable.dice_5
+            else -> R.drawable.dice_6
+        }
+        view.setImageResource(resId)
+    }
+
+    private fun animateHoppingMovement(stepsToMove: Int) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+
+            val moveResult = viewModel.lastMoveResult.value
+
+            // 1. Check Overshot
+            if (moveResult is GameEngine.MoveResult.Stay) {
+                Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
+                delay(500)
+                isAnimatingMove = false
+                viewModel.updatePositionAndNextTurn(activePlayer.currentPosition)
+                return@launch
+            }
+
+            // 2. Hop Loop
+            for (i in 1..stepsToMove) {
+                currentVisualPosition++
+                activePlayer.currentPosition = currentVisualPosition
+                adapter.updatePlayers(players)
+                soundManager.playHop()
+                delay(200)
+            }
+
+            delay(300)
+            handleMoveResult(moveResult) // Show Popups
+
+            // 3. Logic: Check for Snakes/Ladders Destination
+            var finalPos = currentVisualPosition
+            if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
+            if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
+
+            // 4. FIX: Visually move the token THERE first, BEFORE ending turn
+            if (finalPos != currentVisualPosition) {
+                activePlayer.currentPosition = finalPos
+                adapter.updatePlayers(players) // Force update on board
+                delay(500) // Let the player see they moved
+            }
+
+            // 5. NOW hand off control to next player
+            viewModel.updatePositionAndNextTurn(finalPos)
+            isAnimatingMove = false
+        }
+    }
+
     private fun handleMoveResult(result: GameEngine.MoveResult?) {
         if (result == null) return
-
         when (result) {
             is GameEngine.MoveResult.SnakeBite -> {
                 soundManager.playSnakeBite()
-                Toast.makeText(this, "🐍 Ouch! Bit by snake!", Toast.LENGTH_SHORT).show()
+                triggerPopImage(R.drawable.img_snake_pop)
             }
             is GameEngine.MoveResult.LadderClimb -> {
                 soundManager.playLadderClimb()
-                Toast.makeText(this, "🪜 Yahoo! Ladder!", Toast.LENGTH_SHORT).show()
+                triggerPopText("YAY!", 0xFF4CAF50.toInt(), R.anim.pop_zoom_fade)
             }
             is GameEngine.MoveResult.StarCollected -> {
                 soundManager.playStarCollect()
-                Toast.makeText(this, "⭐ STAR POWER ACQUIRED!", Toast.LENGTH_SHORT).show()
+                triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
             is GameEngine.MoveResult.StarUsed -> {
                 soundManager.playStarUsed()
-                Toast.makeText(this, "🛡️ STAR SAVED YOU!", Toast.LENGTH_LONG).show()
+                triggerPopImage(R.drawable.img_devil_smile)
             }
             is GameEngine.MoveResult.Win -> {
                 soundManager.playWin()
-                Toast.makeText(this, "🏆 YOU WIN!", Toast.LENGTH_LONG).show()
+                triggerPopText("WINNER!", 0xFFFFD700.toInt(), R.anim.pop_zoom_fade)
             }
             else -> {}
         }
+    }
+
+    private fun triggerPopText(text: String, color: Int, animRes: Int) {
+        textOverlayPop.text = text
+        textOverlayPop.setTextColor(color)
+        textOverlayPop.visibility = View.VISIBLE
+        val anim = AnimationUtils.loadAnimation(this, animRes)
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                textOverlayPop.visibility = View.GONE
+            }
+        })
+        textOverlayPop.startAnimation(anim)
+    }
+
+    private fun triggerPopImage(drawableRes: Int) {
+        imgOverlayPop.setImageResource(drawableRes)
+        imgOverlayPop.visibility = View.VISIBLE
+        val anim = AnimationUtils.loadAnimation(this, R.anim.pop_image_fade)
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                imgOverlayPop.visibility = View.GONE
+            }
+        })
+        imgOverlayPop.startAnimation(anim)
     }
 }
 
@@ -504,6 +720,75 @@ FILE PATH: \app\src\main\res\anim\aura_pulse.xml
         android:duration="800"
         android:repeatCount="infinite"
         android:repeatMode="reverse" />
+</set>
+
+
+################################################################
+FILE PATH: \app\src\main\res\anim\pop_flash_3x.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fillAfter="false">
+
+    <alpha
+        android:fromAlpha="1.0" android:toAlpha="0.0"
+        android:duration="100"
+        android:repeatMode="reverse"
+        android:repeatCount="5" />
+
+    <scale
+        android:fromXScale="1.2" android:toXScale="1.2"
+        android:fromYScale="1.2" android:toYScale="1.2"
+        android:pivotX="50%" android:pivotY="50%"
+        android:duration="2000"/> <alpha
+    android:fromAlpha="1.0" android:toAlpha="0.0"
+    android:startOffset="1500"
+    android:duration="1000" />
+</set>
+
+
+################################################################
+FILE PATH: \app\src\main\res\anim\pop_image_fade.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fillAfter="false">
+
+    <alpha
+        android:fromAlpha="0.0" android:toAlpha="1.0"
+        android:duration="100" />
+
+    <alpha
+        android:fromAlpha="1.0" android:toAlpha="0.0"
+        android:startOffset="2000"
+        android:duration="1500" />
+</set>
+
+
+################################################################
+FILE PATH: \app\src\main\res\anim\pop_zoom_fade.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fillAfter="false">
+
+    <scale
+        android:fromXScale="0.0" android:toXScale="1.5"
+        android:fromYScale="0.0" android:toYScale="1.5"
+        android:pivotX="50%" android:pivotY="50%"
+        android:duration="300"
+        android:interpolator="@android:anim/overshoot_interpolator"/>
+
+    <alpha
+        android:fromAlpha="1.0" android:toAlpha="0.0"
+        android:startOffset="2000"
+        android:duration="1500" />
 </set>
 
 
@@ -741,63 +1026,123 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:layout_height="0dp"
         android:background="@drawable/full_board_bg"
         app:layout_constraintDimensionRatio="1:1"
-        app:layout_constraintBottom_toTopOf="@+id/panel_controls"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintVertical_bias="0.5"
         tools:itemCount="100"
-        tools:layoutManager="androidx.recyclerview.widget.GridLayoutManager"
-        tools:listitem="@layout/item_square"
         tools:spanCount="10" />
 
+    <FrameLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:elevation="20dp"
+        app:layout_constraintTop_toTopOf="@id/recycler_board"
+        app:layout_constraintBottom_toBottomOf="@id/recycler_board"
+        app:layout_constraintStart_toStartOf="@id/recycler_board"
+        app:layout_constraintEnd_toEndOf="@id/recycler_board">
+
+        <TextView android:id="@+id/text_overlay_pop" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone" android:textSize="50sp" android:textColor="#FFF" android:textStyle="bold"/>
+        <ImageView android:id="@+id/img_overlay_pop" android:layout_width="300dp" android:layout_height="300dp" android:layout_gravity="center" android:visibility="gone"/>
+    </FrameLayout>
+
     <LinearLayout
-        android:id="@+id/panel_controls"
-        android:layout_width="match_parent"
+        android:id="@+id/layout_p3"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="#5D4037"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p3" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <TextView android:text="P3" android:textColor="#00FF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p4"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p4" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <TextView android:text="P4" android:textColor="#FFFF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P1" android:textColor="#FF0000" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p1" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+    </LinearLayout>
 
-        <ImageView
-            android:id="@+id/img_dice"
-            android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:layout_gravity="center"
-            android:src="@drawable/dice_1"
-            android:layout_marginBottom="8dp" />
+    <LinearLayout
+        android:id="@+id/layout_p2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P2" android:textColor="#0000FF" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p2" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+    </LinearLayout>
 
-        <TextView
-            android:id="@+id/text_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="Player 1's Turn"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+    <TextView
+        android:id="@+id/text_main_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Waiting..."
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:background="#88000000"
+        android:padding="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp"/>
 
-        <Button
-            android:id="@+id/btn_roll"
-            android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:layout_marginTop="12dp"
-            android:backgroundTint="#FFB300"
-            android:text="ROLL DICE 🎲"
-            android:textColor="#000000"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+    <LinearLayout
+        android:id="@+id/layout_setup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#D7CCC8"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="30dp"
+        android:visibility="visible">
 
-        <TextView
-            android:id="@+id/text_dice_result"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:text="Result: -"
-            android:textColor="#FFB300"
-            android:textSize="16sp" />
+        <TextView android:text="SNALD BATTLE" android:textSize="40sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
+        <TextView android:text="Select Players" android:textSize="24sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="20dp"/>
 
+        <Button android:id="@+id/btn_2_players" android:text="2 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/btn_3_players" android:text="3 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/btn_4_players" android:text="4 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_game_over"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#99000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="40dp"
+        android:visibility="gone">
+
+        <TextView android:text="GAME OVER!" android:textColor="#FFF" android:textSize="50sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
+        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:backgroundTint="#FFB300" android:layout_width="200dp" android:layout_height="wrap_content"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
@@ -811,20 +1156,21 @@ FILE PATH: \app\src\main\res\layout\item_square.xml
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"> <TextView
-    android:id="@+id/text_square_number"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:visibility="gone"
-    android:textColor="#000000"
-    android:textSize="10sp" />
+    android:layout_height="match_parent">
+
+    <TextView
+        android:id="@+id/text_square_number"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:textColor="#000000"
+        android:textSize="10sp" />
 
     <ImageView
         android:id="@+id/image_player"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="2dp"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:layout_gravity="center"
         android:src="@drawable/img_token_player"
         android:visibility="gone" />
 
