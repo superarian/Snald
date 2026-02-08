@@ -8,10 +8,14 @@ class SoundManager(private val context: Context) {
 
     private var mediaPlayer: MediaPlayer? = null
 
-    // NEW: Dice Roll Sound
     fun playDiceRoll() {
-        // MAKE SURE YOU HAVE 'sfx_dice_roll' in res/raw!
         playSound(R.raw.sfx_dice_roll)
+    }
+
+    // NEW: Hop Sound
+    fun playHop() {
+        // MAKE SURE YOU HAVE 'sfx_hop' in res/raw!
+        playSound(R.raw.sfx_hop)
     }
 
     fun playSnakeBite() {
@@ -35,15 +39,12 @@ class SoundManager(private val context: Context) {
     }
 
     private fun playSound(resId: Int) {
-        // 1. Release previous sound to avoid overlapping chaos
-        mediaPlayer?.release()
-
-        // 2. Create and Start new sound
         try {
+            // Release previous to allow fast repetitive sounds (like hopping)
+            mediaPlayer?.release()
+
             mediaPlayer = MediaPlayer.create(context, resId)
             mediaPlayer?.start()
-
-            // 3. Clean up when finished
             mediaPlayer?.setOnCompletionListener {
                 it.release()
                 mediaPlayer = null
