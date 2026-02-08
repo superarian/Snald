@@ -1,0 +1,1010 @@
+============================================
+PROJECT: SNALD (Snake and Ladder)
+EXPORT DATE: 02/08/2026 18:30:01
+============================================
+
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\logic\BoardConfig.kt
+################################################################
+
+
+package com.bytemantis.snald.logic
+
+object BoardConfig {
+    const val BOARD_SIZE = 100
+
+    // 🐍 Snakes (Head -> Tail)
+    // "snake 1 goes from 29 to 10..."
+    val SNAKES = mapOf(
+        29 to 10,
+        52 to 32,
+        59 to 40,
+        81 to 61,
+        83 to 57,
+        88 to 85,
+        91 to 73,
+        95 to 3
+    )
+
+    // 🪜 Ladders (Bottom -> Top)
+    // "7 to 28..."
+    val LADDERS = mapOf(
+        7 to 28,
+        19 to 58,
+        27 to 55,
+        48 to 75,
+        51 to 71,
+        62 to 98
+    )
+
+    // ⭐ Stars (Hidden Numbers)
+    // "stars on these numbers..."
+    val STARS = setOf(20, 37, 54, 79, 94)
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\logic\GameEngine.kt
+################################################################
+
+
+package com.bytemantis.snald.logic
+
+import com.bytemantis.snald.model.Player
+
+class GameEngine {
+
+    fun calculateMove(player: Player, diceValue: Int): MoveResult {
+        var newPosition = player.currentPosition + diceValue
+
+        // Rule: Must land exactly on 100
+        if (newPosition > BoardConfig.BOARD_SIZE) {
+            return MoveResult.Stay(player.currentPosition, "Overshot!")
+        }
+
+        // Win Condition
+        if (newPosition == BoardConfig.BOARD_SIZE) {
+            player.currentPosition = 100
+            player.isWinner = true
+            return MoveResult.Win
+        }
+
+        // 1. Check for Star (Immunity Pickup)
+        if (BoardConfig.STARS.contains(newPosition)) {
+            player.currentPosition = newPosition
+            player.hasStar = true
+            return MoveResult.StarCollected(newPosition)
+        }
+
+        // 2. Check for Snakes (Danger)
+        if (BoardConfig.SNAKES.containsKey(newPosition)) {
+            val snakeTail = BoardConfig.SNAKES[newPosition]!!
+
+            if (player.hasStar) {
+                // CONSUME STAR - Block the bite!
+                player.hasStar = false
+                player.currentPosition = newPosition // Stay safe at head
+                return MoveResult.StarUsed(newPosition, "Star Shield Used!")
+            } else {
+                // OUCH - Go down
+                player.currentPosition = snakeTail
+                return MoveResult.SnakeBite(newPosition, snakeTail)
+            }
+        }
+
+        // 3. Check for Ladders (Boost)
+        if (BoardConfig.LADDERS.containsKey(newPosition)) {
+            val ladderTop = BoardConfig.LADDERS[newPosition]!!
+            player.currentPosition = ladderTop
+            return MoveResult.LadderClimb(newPosition, ladderTop)
+        }
+
+        // 4. Normal Move
+        player.currentPosition = newPosition
+        return MoveResult.NormalMove(newPosition)
+    }
+
+    // Tells the UI what to draw/animate
+    sealed class MoveResult {
+        data class NormalMove(val to: Int) : MoveResult()
+        data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
+        data class LadderClimb(val bottom: Int, val top: Int) : MoveResult()
+        data class StarCollected(val at: Int) : MoveResult()
+        data class StarUsed(val at: Int, val msg: String) : MoveResult()
+        data class Stay(val at: Int, val reason: String) : MoveResult()
+        object Win : MoveResult()
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\model\Player.kt
+################################################################
+
+
+package com.bytemantis.snald.model
+
+data class Player(
+    val id: Int,
+    val name: String,
+    var currentPosition: Int = 1, // Everyone starts at square 1
+    var hasStar: Boolean = false, // The Immunity State
+    var isWinner: Boolean = false
+)
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\BoardAdapter.kt
+################################################################
+
+
+package com.bytemantis.snald.ui
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.view.animation.AnimationUtils
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+import com.bytemantis.snald.R
+import com.bytemantis.snald.logic.BoardConfig
+import com.bytemantis.snald.model.Player
+
+class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
+
+    // This holds the current player data so we know where to draw them
+    private var currentPlayer: Player? = null
+
+    // We refresh the board whenever the player moves
+    fun updatePlayerState(player: Player) {
+        this.currentPlayer = player
+        notifyDataSetChanged() // Refreshes the whole grid
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
+        return SquareViewHolder(view)
+    }
+
+    override fun getItemCount(): Int = BoardConfig.BOARD_SIZE // Always 100
+
+    override fun onBindViewHolder(holder: SquareViewHolder, position: Int) { 
+        // 🧮 THE ZIG-ZAG ALGORITHM 
+        // This turns a boring grid index (0..99) into a real Snake & Ladder board coordinate. 
+        
+        val row = position / 10 
+        val col = position % 10 
+        
+        val squareNumber = if (row % 2 == 0) { 
+            // Even Rows (0, 2, 4...): Count Left to Right (Normal) 
+            // Wait! In S&L, usually Bottom is 1. 
+            // Let's stick to your layout (Top=1) but make it snake. 
+            // Actually, STANDARD S&L has 100 at Top-Left and 1 at Bottom-Left. 
+            // Let's invert the row to make 1 start at the bottom! 
+            
+            val invertedRow = 9 - row 
+            val realNumber = if (invertedRow % 2 == 0) { 
+                (invertedRow * 10) + col + 1 
+            } else { 
+                 // Odd Rows: Count Right to Left 
+                (invertedRow * 10) + (10 - col) 
+            } 
+            realNumber 
+        } else { 
+            // Fallback simple math if the above is too complex 
+            // Let's just fix the visual "Weirdness" first: 
+            // Real game: Row 0 is 100..91, Row 1 is 81..90 
+            val invertedRow = 9 - row 
+            if (invertedRow % 2 == 0) (invertedRow * 10) + col + 1 else (invertedRow * 10) + (10 - col) 
+        } 
+ 
+        holder.bind(squareNumber, currentPlayer) 
+    }
+
+    class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) { 
+        // We removed 'indicator_special' from XML, so we remove it here too. 
+        private val textNumber: TextView = itemView.findViewById(R.id.text_square_number) 
+        private val iconStar: TextView = itemView.findViewById(R.id.icon_star) 
+        private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player) 
+ 
+        fun bind(number: Int, player: Player?) {
+            // 1. ALWAYS HIDE NUMBERS & STARS (Your background image has them!)
+            textNumber.visibility = View.GONE
+            iconStar.visibility = View.GONE
+
+            // 2. SHOW PLAYER (Your Custom Token)
+            if (player != null && player.currentPosition == number) {
+                imagePlayer.visibility = View.VISIBLE
+
+                if (player.hasStar) {
+                    val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                    imagePlayer.startAnimation(pulse)
+                    imagePlayer.setColorFilter(0xFFFFD700.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+                } else {
+                    imagePlayer.clearAnimation()
+                    imagePlayer.clearColorFilter()
+                }
+
+            } else {
+                imagePlayer.visibility = View.GONE
+                imagePlayer.clearAnimation()
+            }
+        } 
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\GameViewModel.kt
+################################################################
+
+
+package com.bytemantis.snald.ui
+
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import com.bytemantis.snald.logic.GameEngine
+import com.bytemantis.snald.model.Player
+
+class GameViewModel : ViewModel() {
+
+    // The Engine Contractor (The Brain)
+    private val engine = GameEngine()
+
+    // The State (What the UI sees)
+    // We use "LiveData" so the UI updates automatically when these change.
+
+    private val _playerState = MutableLiveData<Player>()
+    val playerState: LiveData<Player> = _playerState
+
+    private val _lastMoveResult = MutableLiveData<GameEngine.MoveResult>()
+    val lastMoveResult: LiveData<GameEngine.MoveResult> = _lastMoveResult
+
+    private val _diceValue = MutableLiveData<Int>()
+    val diceValue: LiveData<Int> = _diceValue
+
+    init {
+        // Start the game with Player 1
+        _playerState.value = Player(id = 1, name = "Player 1")
+    }
+
+    // This is the ONLY function the UI is allowed to call.
+    fun rollDice() {
+        val currentPlayer = _playerState.value ?: return
+        if (currentPlayer.isWinner) return // Game Over, no more rolling
+
+        // 1. Roll the dice (Random 1-6)
+        val rolledNumber = (1..6).random()
+        _diceValue.value = rolledNumber
+
+        // 2. Ask the Contractor to calculate the result
+        val result = engine.calculateMove(currentPlayer, rolledNumber)
+
+        // 3. Update the LiveData (This triggers the UI to animate)
+        _lastMoveResult.value = result
+
+        // Force the UI to refresh the player data
+        _playerState.value = currentPlayer
+    }
+
+    // Helper to reset game if needed
+    fun resetGame() {
+        _playerState.value = Player(id = 1, name = "Player 1")
+        _diceValue.value = 1
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\SoundManager.kt
+################################################################
+
+
+package com.bytemantis.snald.ui
+
+import android.content.Context
+import android.media.MediaPlayer
+import com.bytemantis.snald.R
+
+class SoundManager(private val context: Context) {
+
+    private var mediaPlayer: MediaPlayer? = null
+
+    fun playSnakeBite() {
+        playSound(R.raw.sfx_snake_bite)
+    }
+
+    fun playLadderClimb() {
+        playSound(R.raw.sfx_ladder_climb)
+    }
+
+    fun playStarCollect() {
+        playSound(R.raw.sfx_star_collect)
+    }
+
+    // NEW: Sound when Star Shield protects you
+    fun playStarUsed() {
+        // Ensure you have a file named 'sfx_star_use' in res/raw
+        // If your file is named differently, change it here.
+        playSound(R.raw.sfx_star_use)
+    }
+
+    // NEW: Sound when reaching 100
+    fun playWin() {
+        // Ensure you have a file named 'sfx_win' in res/raw
+        playSound(R.raw.sfx_win)
+    }
+
+    private fun playSound(resId: Int) {
+        // 1. Release previous sound to avoid crashing memory
+        mediaPlayer?.release()
+
+        // 2. Create and Start new sound
+        // We use try-catch to prevent crashes if a sound file is missing
+        try {
+            mediaPlayer = MediaPlayer.create(context, resId)
+            mediaPlayer?.start()
+
+            // 3. Clean up when finished
+            mediaPlayer?.setOnCompletionListener {
+                it.release()
+                mediaPlayer = null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\MainActivity.kt
+################################################################
+
+
+package com.bytemantis.snald
+
+import android.os.Bundle
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.bytemantis.snald.logic.GameEngine
+import com.bytemantis.snald.ui.BoardAdapter
+import com.bytemantis.snald.ui.GameViewModel
+import com.bytemantis.snald.ui.SoundManager
+
+class MainActivity : AppCompatActivity() {
+
+    // Connect to the ViewModel
+    private val viewModel: GameViewModel by viewModels()
+
+    // Connect to the Adapter
+    private val adapter = BoardAdapter()
+    private lateinit var soundManager: SoundManager
+    private lateinit var imgDice: ImageView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        soundManager = SoundManager(this)
+
+        // 1. Setup the Board Grid
+        val recycler = findViewById<RecyclerView>(R.id.recycler_board)
+        recycler.layoutManager = GridLayoutManager(this, 10) // 10 columns
+        recycler.adapter = adapter
+
+        // 2. Setup Buttons & Text
+        val btnRoll = findViewById<Button>(R.id.btn_roll)
+        val textDice = findViewById<TextView>(R.id.text_dice_result)
+        val textStatus = findViewById<TextView>(R.id.text_status)
+        imgDice = findViewById(R.id.img_dice)
+
+        // 3. Observe the "Dice" with Animation
+        viewModel.diceValue.observe(this) { dice ->
+            // A. Disable button so they can't spam click while rolling
+            btnRoll.isEnabled = false
+            textStatus.text = "Rolling..."
+
+            // B. The Animation (Spin 360 degrees fast)
+            imgDice.animate()
+                .rotationBy(360f * 2) // Spin 2 times
+                .setDuration(500)     // Take 0.5 seconds
+                .withEndAction {
+                    // C. After spinning, SHOW the result
+                    textDice.text = "Rolled: $dice 🎲"
+                    val resId = when (dice) {
+                        1 -> R.drawable.dice_1
+                        2 -> R.drawable.dice_2
+                        3 -> R.drawable.dice_3
+                        4 -> R.drawable.dice_4
+                        5 -> R.drawable.dice_5
+                        else -> R.drawable.dice_6
+                    }
+                    imgDice.setImageResource(resId)
+
+                    // Re-enable button
+                    btnRoll.isEnabled = true
+                }
+                .start()
+        }
+
+        // 4. Observe the "Player" (Move the piece!)
+        viewModel.playerState.observe(this) { player ->
+            adapter.updatePlayerState(player)
+
+            if (player.hasStar) {
+                textStatus.text = "Player 1 (IMMUNE!) ⭐"
+            } else {
+                textStatus.text = "Player 1's Turn"
+            }
+        }
+
+        // 5. Observe Messages (Snakes, Ladders, Wins)
+        viewModel.lastMoveResult.observe(this) { result ->
+            when (result) {
+                is GameEngine.MoveResult.SnakeBite -> {
+                    soundManager.playSnakeBite()
+                    Toast.makeText(this, "🐍 Ouch! Bit by snake!", Toast.LENGTH_SHORT).show()
+                }
+                is GameEngine.MoveResult.LadderClimb -> {
+                    soundManager.playLadderClimb()
+                    Toast.makeText(this, "🪜 Yahoo! Ladder!", Toast.LENGTH_SHORT).show()
+                }
+                is GameEngine.MoveResult.StarCollected -> {
+                    soundManager.playStarCollect()
+                    Toast.makeText(this, "⭐ STAR POWER ACQUIRED!", Toast.LENGTH_SHORT).show()
+                }
+                is GameEngine.MoveResult.StarUsed -> {
+                    // NEW: Play the Star Shield Sound
+                    soundManager.playStarUsed()
+                    Toast.makeText(this, "🛡️ STAR SAVED YOU!", Toast.LENGTH_LONG).show()
+                }
+                is GameEngine.MoveResult.Win -> {
+                    // NEW: Play the Win Sound
+                    soundManager.playWin()
+                    Toast.makeText(this, "🏆 YOU WIN!", Toast.LENGTH_LONG).show()
+                }
+                else -> {}
+            }
+        }
+
+        // 6. Connect Button Click
+        btnRoll.setOnClickListener {
+            viewModel.rollDice()
+        }
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\res\anim\aura_pulse.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/accelerate_decelerate_interpolator"
+    android:shareInterpolator="false">
+
+    <scale
+        android:fromXScale="1.0"
+        android:toXScale="1.2"
+        android:fromYScale="1.0"
+        android:toYScale="1.2"
+        android:pivotX="50%"
+        android:pivotY="50%"
+        android:duration="800"
+        android:repeatCount="infinite"
+        android:repeatMode="reverse" />
+
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.7"
+        android:duration="800"
+        android:repeatCount="infinite"
+        android:repeatMode="reverse" />
+</set>
+
+
+################################################################
+FILE PATH: \app\src\main\res\drawable\ic_launcher_background.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,0L9,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,0L19,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,0L29,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,0L39,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,0L49,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,0L59,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,0L69,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,0L79,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M89,0L89,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M99,0L99,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,9L108,9"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,19L108,19"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,29L108,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,39L108,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,49L108,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,59L108,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,69L108,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,79L108,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,89L108,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,99L108,99"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,29L89,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,39L89,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,49L89,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,59L89,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,69L89,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,79L89,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,19L29,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,19L39,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,19L49,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,19L59,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,19L69,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,19L79,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+</vector>
+
+
+################################################################
+FILE PATH: \app\src\main\res\drawable\ic_launcher_foreground.xml
+################################################################
+
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="85.84757"
+                android:endY="92.4963"
+                android:startX="42.9492"
+                android:startY="49.59793"
+                android:type="linear">
+                <item
+                    android:color="#44000000"
+                    android:offset="0.0" />
+                <item
+                    android:color="#00000000"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
+        android:strokeWidth="1"
+        android:strokeColor="#00000000" />
+</vector>
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\activity_main.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#8D6E63">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_board"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@drawable/full_board_bg"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintBottom_toTopOf="@+id/panel_controls"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:itemCount="100"
+        tools:layoutManager="androidx.recyclerview.widget.GridLayoutManager"
+        tools:listitem="@layout/item_square"
+        tools:spanCount="10" />
+
+    <LinearLayout
+        android:id="@+id/panel_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#5D4037"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <ImageView
+            android:id="@+id/img_dice"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:layout_gravity="center"
+            android:src="@drawable/dice_1"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/text_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="Player 1's Turn"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_roll"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#FFB300"
+            android:text="ROLL DICE 🎲"
+            android:textColor="#000000"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/text_dice_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="Result: -"
+            android:textColor="#FFB300"
+            android:textSize="16sp" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\item_square.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="40dp">
+
+    <TextView
+        android:id="@+id/text_square_number"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="start|top"
+        android:padding="2dp"
+        android:textColor="#000000"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        tools:text="100" />
+
+    <TextView
+        android:id="@+id/icon_star"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="🌟"
+        android:textSize="22sp"
+        android:visibility="gone"/>
+
+    <ImageView
+        android:id="@+id/image_player"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_gravity="center"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+</FrameLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+
+################################################################
+FILE PATH: \app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+
+################################################################
+FILE PATH: \app\src\main\res\values\colors.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+
+################################################################
+FILE PATH: \app\src\main\res\values\strings.xml
+################################################################
+
+
+<resources>
+    <string name="app_name">SNALD</string>
+</resources>
+
+
+################################################################
+FILE PATH: \app\src\main\res\values\themes.xml
+################################################################
+
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.SNALD" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your light theme here. -->
+        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    </style>
+
+    <style name="Theme.SNALD" parent="Base.Theme.SNALD" />
+</resources>
+
+
+################################################################
+FILE PATH: \app\src\main\res\values-night\themes.xml
+################################################################
+
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.SNALD" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your dark theme here. -->
+        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+    </style>
+</resources>
+
+
+################################################################
+FILE PATH: \app\src\main\res\xml\backup_rules.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample backup rules file; uncomment and customize as necessary.
+   See https://developer.android.com/guide/topics/data/autobackup
+   for details.
+   Note: This file is ignored for devices older than API 31
+   See https://developer.android.com/about/versions/12/backup-restore
+-->
+<full-backup-content>
+    <!--
+   <include domain="sharedpref" path="."/>
+   <exclude domain="sharedpref" path="device.xml"/>
+-->
+</full-backup-content>
+
+
+################################################################
+FILE PATH: \app\src\main\res\xml\data_extraction_rules.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample data extraction rules file; uncomment and customize as necessary.
+   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   for details.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- TODO: Use <include> and <exclude> to control what is backed up.
+        <include .../>
+        <exclude .../>
+        -->
+    </cloud-backup>
+    <!--
+    <device-transfer>
+        <include .../>
+        <exclude .../>
+    </device-transfer>
+    -->
+</data-extraction-rules>
+
+
+################################################################
+FILE PATH: \app\src\main\AndroidManifest.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SNALD">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
