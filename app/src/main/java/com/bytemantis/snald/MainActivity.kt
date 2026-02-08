@@ -1,6 +1,8 @@
 package com.bytemantis.snald
 
 import android.os.Bundle
+import android.view.View
+import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
@@ -23,11 +25,16 @@ class MainActivity : AppCompatActivity() {
     private val viewModel: GameViewModel by viewModels()
     private val adapter = BoardAdapter()
     private lateinit var soundManager: SoundManager
+
+    // UI References
     private lateinit var imgDice: ImageView
     private lateinit var textStatus: TextView
     private lateinit var btnRoll: Button
 
-    // FLAG: Prevents the Board from updating instantly when ViewModel changes
+    // Pop-Up Overlay References
+    private lateinit var textOverlayPop: TextView
+    private lateinit var imgOverlayPop: ImageView
+
     private var isAnimatingMove = false
     private var currentVisualPosition = 1
 
@@ -36,40 +43,39 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         soundManager = SoundManager(this)
 
+        // 1. Setup Board
         val recycler = findViewById<RecyclerView>(R.id.recycler_board)
         recycler.layoutManager = GridLayoutManager(this, 10)
         recycler.adapter = adapter
 
+        // 2. Setup Controls & Overlays
         btnRoll = findViewById(R.id.btn_roll)
         val textDice = findViewById<TextView>(R.id.text_dice_result)
         textStatus = findViewById(R.id.text_status)
         imgDice = findViewById(R.id.img_dice)
 
-        // 1. Observe Dice (Trigger Animation)
+        textOverlayPop = findViewById(R.id.text_overlay_pop)
+        imgOverlayPop = findViewById(R.id.img_overlay_pop)
+
+        // 3. Observe Dice
         viewModel.diceValue.observe(this) { dice ->
             btnRoll.isEnabled = false
             textStatus.text = "Rolling..."
             soundManager.playDiceRoll()
-
-            // FIX 1: Set the image IMMEDIATELY so it spins *as* the correct number
-            // This prevents the "snap/lag" effect at the end.
             updateDiceImage(dice)
 
             imgDice.animate()
-                .rotationBy(720f) // Spin 2 full times
+                .rotationBy(720f)
                 .setDuration(500)
                 .withEndAction {
                     textDice.text = "Rolled: $dice 🎲"
-
-                    // START HOPPING SEQUENCE
                     animateHoppingMovement(dice)
                 }
                 .start()
         }
 
-        // 2. Observe Player (Sync Board)
+        // 4. Observe Player
         viewModel.playerState.observe(this) { player ->
-            // Only update board instantly if we are NOT in the middle of an animation sequence
             if (!isAnimatingMove) {
                 adapter.updatePlayerState(player)
                 updateStatusText(player)
@@ -79,7 +85,6 @@ class MainActivity : AppCompatActivity() {
 
         btnRoll.setOnClickListener {
             if (!isAnimatingMove) {
-                // Capture start position before logic updates it
                 currentVisualPosition = viewModel.playerState.value?.currentPosition ?: 1
                 isAnimatingMove = true
                 viewModel.rollDice()
@@ -107,48 +112,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- THE HOPPING LOGIC ---
     private fun animateHoppingMovement(stepsToMove: Int) {
         lifecycleScope.launch {
             val player = viewModel.playerState.value ?: return@launch
             val moveResult = viewModel.lastMoveResult.value
 
-            // FIX 2: Check for OVERSHOOT before hopping.
-            // If the engine says "Stay" (because 98 + 5 > 100), we STOP here.
             if (moveResult is GameEngine.MoveResult.Stay) {
-                Toast.makeText(this@MainActivity, "🚫 Overshot! Need exact roll.", Toast.LENGTH_SHORT).show()
-                delay(500) // Small pause so user sees why they didn't move
-
-                // Reset Flags
+                Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
+                delay(500)
                 isAnimatingMove = false
                 btnRoll.isEnabled = true
-                adapter.updatePlayerState(player) // Ensure visual sync
+                adapter.updatePlayerState(player)
                 return@launch
             }
 
-            // If valid move, start the Hop Loop
+            // Hop Loop
             for (i in 1..stepsToMove) {
                 currentVisualPosition++
-
-                // Create a temporary player for visual update
                 val tempPlayer = player.copy(currentPosition = currentVisualPosition)
                 adapter.updatePlayerState(tempPlayer)
-
                 soundManager.playHop()
-
-                // Delay for "Smooth but Quick" effect
                 delay(200)
             }
 
-            // We have finished walking. Now handle Snakes/Ladders/Stars
-
-            // Short pause before Snake/Ladder action
-            delay(300)
+            // Logic Handling with NEW POP ANIMATIONS
+            delay(200)
             handleMoveResult(moveResult)
 
-            // 3. Final Sync & Unlock
+            // Final Sync
             isAnimatingMove = false
-            adapter.updatePlayerState(player) // Ensure we match ViewModel exactly
+            adapter.updatePlayerState(player)
             updateStatusText(player)
             btnRoll.isEnabled = true
         }
@@ -160,27 +153,70 @@ class MainActivity : AppCompatActivity() {
         when (result) {
             is GameEngine.MoveResult.SnakeBite -> {
                 soundManager.playSnakeBite()
-                Toast.makeText(this, "🐍 Ouch! Bit by snake!", Toast.LENGTH_SHORT).show()
-                // The final sync will move the token to the tail
+                // POP: Snake Image + Fade
+                triggerPopImage(R.drawable.img_snake_pop)
             }
             is GameEngine.MoveResult.LadderClimb -> {
                 soundManager.playLadderClimb()
-                Toast.makeText(this, "🪜 Yahoo! Ladder!", Toast.LENGTH_SHORT).show()
-                // The final sync will move the token to the top
+                // POP: "YAY!" + Zoom
+                triggerPopText("YAY!", 0xFF4CAF50.toInt(), R.anim.pop_zoom_fade)
+
+                // Simulating "Smooth" Ladder Climb by updating visual position
+                // (Note: For true xy-translation we need more complex View code,
+                // this ensures it snaps cleanly after the YAY)
             }
             is GameEngine.MoveResult.StarCollected -> {
                 soundManager.playStarCollect()
-                Toast.makeText(this, "⭐ STAR POWER ACQUIRED!", Toast.LENGTH_SHORT).show()
+                // POP: "POWER!" + Flash 3x
+                triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
             is GameEngine.MoveResult.StarUsed -> {
                 soundManager.playStarUsed()
-                Toast.makeText(this, "🛡️ STAR SAVED YOU!", Toast.LENGTH_LONG).show()
+                // POP: Devil/Smiley Image + Fade
+                triggerPopImage(R.drawable.img_devil_smile)
             }
             is GameEngine.MoveResult.Win -> {
                 soundManager.playWin()
-                Toast.makeText(this, "🏆 YOU WIN!", Toast.LENGTH_LONG).show()
+                // POP: "YOU WIN" + Zoom
+                triggerPopText("YOU WIN!", 0xFFFFD700.toInt(), R.anim.pop_zoom_fade)
             }
             else -> {}
         }
+    }
+
+    // --- NEW POP-UP HELPERS ---
+
+    private fun triggerPopText(text: String, color: Int, animRes: Int) {
+        textOverlayPop.text = text
+        textOverlayPop.setTextColor(color)
+        textOverlayPop.visibility = View.VISIBLE
+
+        val anim = AnimationUtils.loadAnimation(this, animRes)
+        // Hide again when animation ends
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                textOverlayPop.visibility = View.GONE
+            }
+        })
+        textOverlayPop.startAnimation(anim)
+    }
+
+    private fun triggerPopImage(drawableRes: Int) {
+        imgOverlayPop.setImageResource(drawableRes)
+        imgOverlayPop.visibility = View.VISIBLE
+
+        // Always use the fade animation for images as requested
+        val anim = AnimationUtils.loadAnimation(this, R.anim.pop_image_fade)
+
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                imgOverlayPop.visibility = View.GONE
+            }
+        })
+        imgOverlayPop.startAnimation(anim)
     }
 }
