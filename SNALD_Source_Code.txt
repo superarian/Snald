@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/09/2026 17:13:09
+EXPORT DATE: 02/09/2026 18:01:31
 ============================================
 
 
@@ -1194,6 +1194,13 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         app:layout_constraintStart_toStartOf="@id/recycler_board"
         app:layout_constraintEnd_toEndOf="@id/recycler_board">
 
+        <ImageView
+            android:id="@+id/floating_token"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:src="@drawable/img_token_player"
+            android:visibility="gone"/>
+
         <TextView
             android:id="@+id/text_overlay_pop"
             android:layout_width="wrap_content"
@@ -1210,18 +1217,10 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
 
         <ImageView
             android:id="@+id/img_overlay_pop"
-            android:layout_width="350dp"
-            android:layout_height="350dp"
+            android:layout_width="380dp"
+            android:layout_height="380dp"
             android:layout_gravity="center"
             android:visibility="gone"/>
-
-        <VideoView
-            android:id="@+id/video_overlay_pop"
-            android:layout_width="350dp"
-            android:layout_height="350dp"
-            android:layout_gravity="center"
-            android:visibility="gone" />
-
     </FrameLayout>
 
     <LinearLayout
@@ -1233,7 +1232,7 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:visibility="gone"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
-        <ImageView android:id="@+id/dice_p3" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <ImageView android:id="@+id/dice_p3" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
         <TextView android:text="P3" android:textColor="#00FF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
@@ -1246,7 +1245,7 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent">
-        <ImageView android:id="@+id/dice_p4" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <ImageView android:id="@+id/dice_p4" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
         <TextView android:text="P4" android:textColor="#FFFF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
@@ -1261,7 +1260,7 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
         <TextView android:text="P1" android:textColor="#FF0000" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <ImageView android:id="@+id/dice_p1" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <ImageView android:id="@+id/dice_p1" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
     </LinearLayout>
 
     <LinearLayout
@@ -1275,7 +1274,7 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
         <TextView android:text="P2" android:textColor="#0000FF" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <ImageView android:id="@+id/dice_p2" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" />
+        <ImageView android:id="@+id/dice_p2" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
     </LinearLayout>
 
     <TextView

@@ -2,6 +2,7 @@ package com.bytemantis.snald
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AnimationUtils
@@ -10,6 +11,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -38,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
+    private lateinit var videoOverlayPop: VideoView // NEW: Video Overlay
     private lateinit var floatingToken: ImageView
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
@@ -69,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.text_main_status)
         textOverlayPop = findViewById(R.id.text_overlay_pop)
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
+        videoOverlayPop = findViewById(R.id.video_overlay_pop) // NEW
         floatingToken = findViewById(R.id.floating_token)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
@@ -101,7 +105,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // FIX 1: OBSERVE PLAYERS (Shows tokens immediately on start)
+        // 1. Observe Players
         viewModel.players.observe(this) { players ->
             if (!isAnimatingMove) {
                 adapter.updatePlayers(players)
@@ -129,11 +133,12 @@ class MainActivity : AppCompatActivity() {
             highlightActiveDice(id)
         }
 
-        // 4. Collision (Kill)
+        // 4. Collision (Kill) - UPDATED TO PLAY VIDEO
         viewModel.collisionEvent.observe(this) { killedPlayer ->
             if (killedPlayer != null) {
-                soundManager.playSnakeBite()
-                triggerPopImage(R.drawable.img_snake_pop)
+                // Play the hammer_kill video
+                triggerPopVideo(R.raw.hammer_kill)
+
                 Toast.makeText(this, "P${killedPlayer.id} KILLED! Back to Start!", Toast.LENGTH_SHORT).show()
             }
         }
@@ -223,7 +228,7 @@ class MainActivity : AppCompatActivity() {
                 // If Snake/Ladder, delay, pop, then SLIDE
                 if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
-                    handleMoveResult(moveResult) // Pop
+                    handleMoveResult(moveResult) // Pop Image
 
                     delay(1000) // Wait for pop
 
@@ -247,7 +252,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- FIX: Coordinate Mapping (Maps Square# to Screen Index) ---
+    // --- Coordinate Mapping (Maps Square# to Screen Index) ---
     private fun getAdapterPositionForSquare(squareNumber: Int): Int {
         if (squareNumber < 1 || squareNumber > 100) return 0
 
@@ -271,8 +276,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
-
-        // USE THE HELPER TO FIND CORRECT VIEW INDICES
         val startIndex = getAdapterPositionForSquare(startSquare)
         val endIndex = getAdapterPositionForSquare(endSquare)
 
@@ -314,6 +317,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Handles standard game events (Snakes, Ladders, Stars)
     private fun handleMoveResult(result: GameEngine.MoveResult?) {
         if (result == null) return
         when (result) {
@@ -339,6 +343,20 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {}
         }
+    }
+
+    // --- NEW: VIDEO POPUP LOGIC ---
+    private fun triggerPopVideo(videoResId: Int) {
+        val uri = Uri.parse("android.resource://$packageName/$videoResId")
+        videoOverlayPop.setVideoURI(uri)
+        videoOverlayPop.setZOrderOnTop(true) // Ensure it shows above surface
+        videoOverlayPop.visibility = View.VISIBLE
+
+        videoOverlayPop.setOnCompletionListener {
+            videoOverlayPop.visibility = View.GONE
+        }
+
+        videoOverlayPop.start()
     }
 
     private fun triggerPopText(text: String, color: Int, animRes: Int) {

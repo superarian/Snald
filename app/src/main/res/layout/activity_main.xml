@@ -58,6 +58,14 @@
             android:layout_height="380dp"
             android:layout_gravity="center"
             android:visibility="gone"/>
+
+        <VideoView
+            android:id="@+id/video_overlay_pop"
+            android:layout_width="300dp"
+            android:layout_height="300dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
     </FrameLayout>
 
     <LinearLayout
