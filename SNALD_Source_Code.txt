@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/09/2026 01:38:41
+EXPORT DATE: 02/09/2026 17:13:09
 ============================================
 
 
@@ -15,29 +15,30 @@ package com.bytemantis.snald.logic
 object BoardConfig {
     const val BOARD_SIZE = 100
 
-    // 🐍 Snakes (Head -> Tail) - CORRECTED
+    // 🐍 Snakes (Head -> Tail)
     val SNAKES = mapOf(
-        95 to 3,   // Giant Red Cobra
-        91 to 73,  // Top Right Green Snake
-        88 to 85,  // Horizontal Gold Snake
-        83 to 57,  // Pink/Purple Snake
-        81 to 61,  // Top Left Green Snake
-        59 to 40,  // Mid-Left Red Snake
-        52 to 32,  // Mid-Right Blue Snake
-        29 to 10   // Bottom Right Green Snake
+        45 to 4,   // NEW: Giant Snake shifted
+        96 to 93,  // NEW: Small Toxic Snake
+        91 to 73,
+        88 to 85,
+        83 to 57,
+        81 to 61,
+        59 to 40,
+        52 to 32,
+        29 to 10
     )
 
-    // 🪜 Ladders (Bottom -> Top) - CORRECTED
+    // 🪜 Ladders (Bottom -> Top)
     val LADDERS = mapOf(
-        62 to 98,  // Top Left Green Ladder
-        51 to 71,  // Top Right Pink Ladder
-        48 to 75,  // Mid-Right Blue Ladder
-        27 to 55,  // Center Green Ladder
-        19 to 58,  // Long Blue Ladder
-        7 to 28    // Bottom Right Ladder
+        62 to 98,
+        51 to 71,
+        48 to 75,
+        27 to 55,
+        19 to 58,
+        7 to 28
     )
 
-    // ⭐ Stars (Immunity Pickup) - CORRECTED
+    // ⭐ Stars (Immunity Pickup)
     val STARS = setOf(20, 37, 54, 79, 94)
 }
 
@@ -162,6 +163,7 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
+        // Ensure square is perfect grid size
         view.layoutParams.height = parent.measuredWidth / 10
         return SquareViewHolder(view)
     }
@@ -169,6 +171,7 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
     override fun getItemCount(): Int = BoardConfig.BOARD_SIZE
 
     override fun onBindViewHolder(holder: SquareViewHolder, position: Int) {
+        // Calculate Zig-Zag Position
         val row = position / 10
         val col = position % 10
         val bottomUpRow = 9 - row
@@ -183,29 +186,65 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 
     class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val textNumber: TextView = itemView.findViewById(R.id.text_square_number)
-        private val imagePlayer: ImageView = itemView.findViewById(R.id.image_player)
+
+        // Single Token View
+        private val tokenCenter: ImageView = itemView.findViewById(R.id.token_center)
+
+        // Multi Token Views
+        private val smallTokens = listOf<ImageView>(
+            itemView.findViewById(R.id.token_1),
+            itemView.findViewById(R.id.token_2),
+            itemView.findViewById(R.id.token_3),
+            itemView.findViewById(R.id.token_4)
+        )
 
         fun bind(number: Int, players: List<Player>) {
             textNumber.visibility = View.GONE
 
-            // Find if ANY player is on this square
-            val playerOnSquare = players.find { it.currentPosition == number && !it.isFinished }
+            // 1. Find ALL players on this square (who haven't finished)
+            val playersHere = players.filter { it.currentPosition == number && !it.isFinished }
 
-            if (playerOnSquare != null) {
-                imagePlayer.visibility = View.VISIBLE
+            // Reset all visibilities first
+            tokenCenter.visibility = View.GONE
+            smallTokens.forEach {
+                it.visibility = View.GONE
+                it.clearAnimation()
+            }
 
-                // Set Color (Red, Blue, etc.)
-                imagePlayer.setColorFilter(playerOnSquare.color)
+            if (playersHere.isEmpty()) {
+                return // Nothing to show
+            }
 
-                if (playerOnSquare.hasStar) {
+            // 2. Decide Layout Mode
+            if (playersHere.size == 1) {
+                // --- SINGLE MODE ---
+                val p = playersHere[0]
+                tokenCenter.visibility = View.VISIBLE
+                tokenCenter.setColorFilter(p.color)
+
+                // Star Pulse
+                if (p.hasStar) {
                     val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                    imagePlayer.startAnimation(pulse)
-                } else {
-                    imagePlayer.clearAnimation()
+                    tokenCenter.startAnimation(pulse)
                 }
             } else {
-                imagePlayer.visibility = View.GONE
-                imagePlayer.clearAnimation()
+                // --- MULTI/CLUSTER MODE ---
+                // Loop through players present and assign them to corner slots
+                for (i in playersHere.indices) {
+                    if (i < smallTokens.size) {
+                        val tokenView = smallTokens[i]
+                        val p = playersHere[i]
+
+                        tokenView.visibility = View.VISIBLE
+                        tokenView.setColorFilter(p.color)
+
+                        // Star Pulse for specific small token
+                        if (p.hasStar) {
+                            val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                            tokenView.startAnimation(pulse)
+                        }
+                    }
+                }
             }
         }
     }
@@ -352,15 +391,19 @@ FILE PATH: \app\src\main\java\com\bytemantis\snald\ui\SoundManager.kt
 
 package com.bytemantis.snald.ui
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
+import android.util.SparseIntArray
+import android.view.animation.LinearInterpolator
 import com.bytemantis.snald.R
 
 class SoundManager(context: Context) {
 
     private val soundPool: SoundPool
-    private val soundMap = mutableMapOf<Int, Int>()
+    // FIX: Using SparseIntArray (Better performance, fixes 'get' error)
+    private val soundMap = SparseIntArray()
 
     init {
         val audioAttributes = AudioAttributes.Builder()
@@ -369,31 +412,53 @@ class SoundManager(context: Context) {
             .build()
 
         soundPool = SoundPool.Builder()
-            .setMaxStreams(5) // Allow 5 sounds at once!
+            .setMaxStreams(5)
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load sounds into memory
-        soundMap[R.raw.sfx_dice_roll] = soundPool.load(context, R.raw.sfx_dice_roll, 1)
-        soundMap[R.raw.sfx_hop] = soundPool.load(context, R.raw.sfx_hop, 1)
-        soundMap[R.raw.sfx_snake_bite] = soundPool.load(context, R.raw.sfx_snake_bite, 1)
-        soundMap[R.raw.sfx_ladder_climb] = soundPool.load(context, R.raw.sfx_ladder_climb, 1)
-        soundMap[R.raw.sfx_star_collect] = soundPool.load(context, R.raw.sfx_star_collect, 1)
-        soundMap[R.raw.sfx_star_use] = soundPool.load(context, R.raw.sfx_star_use, 1)
-        soundMap[R.raw.sfx_win] = soundPool.load(context, R.raw.sfx_win, 1)
+        // Load sounds using .put()
+        soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
+        soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
+        soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
+        soundMap.put(R.raw.sfx_ladder_climb, soundPool.load(context, R.raw.sfx_ladder_climb, 1))
+        soundMap.put(R.raw.sfx_star_collect, soundPool.load(context, R.raw.sfx_star_collect, 1))
+        soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
+        soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
     }
 
     fun playDiceRoll() = play(R.raw.sfx_dice_roll)
     fun playHop() = play(R.raw.sfx_hop)
     fun playSnakeBite() = play(R.raw.sfx_snake_bite)
     fun playLadderClimb() = play(R.raw.sfx_ladder_climb)
-    fun playStarCollect() = play(R.raw.sfx_star_collect)
     fun playStarUsed() = play(R.raw.sfx_star_use)
     fun playWin() = play(R.raw.sfx_win)
 
+    fun playStarCollect() {
+        // FIX: Use .get()
+        val soundId = soundMap.get(R.raw.sfx_star_collect)
+        if (soundId == 0) return
+
+        val streamId = soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
+
+        // Fade out effect
+        val fadeAnim = ValueAnimator.ofFloat(1.0f, 0.0f)
+        fadeAnim.duration = 1500L
+        fadeAnim.interpolator = LinearInterpolator()
+
+        fadeAnim.addUpdateListener { animation ->
+            val volume = animation.animatedValue as Float
+            soundPool.setVolume(streamId, volume, volume)
+        }
+
+        fadeAnim.startDelay = 500
+        fadeAnim.start()
+    }
+
     private fun play(resId: Int) {
-        val soundId = soundMap[resId] ?: return
-        // 1.0f = normal volume, 0 = no loop, 1.0f = normal speed
+        // FIX: Use .get() and check for 0 (SparseIntArray default)
+        val soundId = soundMap.get(resId)
+        if (soundId == 0) return
+
         soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
     }
 }
@@ -406,6 +471,8 @@ FILE PATH: \app\src\main\java\com\bytemantis\snald\MainActivity.kt
 
 package com.bytemantis.snald
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AnimationUtils
@@ -426,6 +493,8 @@ import com.bytemantis.snald.ui.GameViewModel
 import com.bytemantis.snald.ui.SoundManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
 
@@ -433,13 +502,14 @@ class MainActivity : AppCompatActivity() {
     private val adapter = BoardAdapter()
     private lateinit var soundManager: SoundManager
 
-    // Dice Views Map (ID -> ImageView)
+    private lateinit var recyclerBoard: RecyclerView
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
     // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
+    private lateinit var floatingToken: ImageView
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
 
@@ -456,9 +526,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
-        val recycler = findViewById<RecyclerView>(R.id.recycler_board)
-        recycler.layoutManager = GridLayoutManager(this, 10)
-        recycler.adapter = adapter
+        recyclerBoard = findViewById(R.id.recycler_board)
+        recyclerBoard.layoutManager = GridLayoutManager(this, 10)
+        recyclerBoard.adapter = adapter
 
         diceViews = mapOf(
             1 to findViewById(R.id.dice_p1),
@@ -470,6 +540,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.text_main_status)
         textOverlayPop = findViewById(R.id.text_overlay_pop)
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
+        floatingToken = findViewById(R.id.floating_token)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
 
@@ -501,14 +572,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // 1. Dice Roll
+        // FIX 1: OBSERVE PLAYERS (Shows tokens immediately on start)
+        viewModel.players.observe(this) { players ->
+            if (!isAnimatingMove) {
+                adapter.updatePlayers(players)
+            }
+        }
+
+        // 2. Dice Roll
         viewModel.diceValue.observe(this) { dice ->
             val activeId = viewModel.activePlayerId.value ?: return@observe
             val activeDiceView = diceViews[activeId] ?: return@observe
 
             soundManager.playDiceRoll()
             updateDiceImage(activeDiceView, dice)
-
             resetDiceOpacity()
             activeDiceView.alpha = 1.0f
 
@@ -517,15 +594,13 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
-        // 2. Turn Change (Status Text & Highlights)
+        // 3. Turn Change
         viewModel.activePlayerId.observe(this) { id ->
-            if (!isAnimatingMove) {
-                updateStatusText(id)
-                highlightActiveDice(id)
-            }
+            updateStatusText(id)
+            highlightActiveDice(id)
         }
 
-        // 3. Collision (Kill)
+        // 4. Collision (Kill)
         viewModel.collisionEvent.observe(this) { killedPlayer ->
             if (killedPlayer != null) {
                 soundManager.playSnakeBite()
@@ -534,7 +609,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 4. Game Over
+        // 5. Game Over
         viewModel.gameOver.observe(this) { isOver ->
             if (isOver) {
                 soundManager.playWin()
@@ -549,7 +624,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatusText(playerId: Int) {
         statusText.text = "Player $playerId's Turn"
-        // Optional: Change text color based on player color
         val color = when(playerId) {
             1 -> 0xFFFF0000.toInt() // Red
             2 -> 0xFF0000FF.toInt() // Blue
@@ -593,7 +667,6 @@ class MainActivity : AppCompatActivity() {
             val players = viewModel.players.value ?: return@launch
             val activeId = viewModel.activePlayerId.value ?: return@launch
             val activePlayer = players.find { it.id == activeId } ?: return@launch
-
             val moveResult = viewModel.lastMoveResult.value
 
             // 1. Check Overshot
@@ -614,24 +687,101 @@ class MainActivity : AppCompatActivity() {
                 delay(200)
             }
 
-            delay(300)
-            handleMoveResult(moveResult) // Show Popups
-
-            // 3. Logic: Check for Snakes/Ladders Destination
+            // 3. Logic & Animations
             var finalPos = currentVisualPosition
-            if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
-            if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
 
-            // 4. FIX: Visually move the token THERE first, BEFORE ending turn
-            if (finalPos != currentVisualPosition) {
-                activePlayer.currentPosition = finalPos
-                adapter.updatePlayers(players) // Force update on board
-                delay(500) // Let the player see they moved
+            if (moveResult != null) {
+                // If Snake/Ladder, delay, pop, then SLIDE
+                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                    delay(300)
+                    handleMoveResult(moveResult) // Pop
+
+                    delay(1000) // Wait for pop
+
+                    if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
+                    if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
+
+                    // PERFORM THE SLIDE with CORRECT COORDINATES
+                    animateSlide(currentVisualPosition, finalPos, activePlayer.color)
+                } else {
+                    handleMoveResult(moveResult)
+                    delay(500)
+                }
             }
 
-            // 5. NOW hand off control to next player
-            viewModel.updatePositionAndNextTurn(finalPos)
+            // 4. Final Sync
+            activePlayer.currentPosition = finalPos
+            adapter.updatePlayers(players)
+
             isAnimatingMove = false
+            viewModel.updatePositionAndNextTurn(finalPos)
+        }
+    }
+
+    // --- FIX: Coordinate Mapping (Maps Square# to Screen Index) ---
+    private fun getAdapterPositionForSquare(squareNumber: Int): Int {
+        if (squareNumber < 1 || squareNumber > 100) return 0
+
+        // 1. Find the bottom-up row (0-9)
+        val bottomUpRow = (squareNumber - 1) / 10
+
+        // 2. Find the column (0-9) based on Zig-Zag
+        val col = if (bottomUpRow % 2 == 0) {
+            // Even Row (0, 2): Left to Right
+            (squareNumber - 1) % 10
+        } else {
+            // Odd Row (1, 3): Right to Left
+            9 - ((squareNumber - 1) % 10)
+        }
+
+        // 3. Convert to Top-Down RecyclerView Row (0 is top)
+        val row = 9 - bottomUpRow
+
+        // 4. Final Index
+        return (row * 10) + col
+    }
+
+    private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
+
+        // USE THE HELPER TO FIND CORRECT VIEW INDICES
+        val startIndex = getAdapterPositionForSquare(startSquare)
+        val endIndex = getAdapterPositionForSquare(endSquare)
+
+        val startView = recyclerBoard.layoutManager?.findViewByPosition(startIndex)
+        val endView = recyclerBoard.layoutManager?.findViewByPosition(endIndex)
+
+        if (startView != null && endView != null) {
+            val startCoords = IntArray(2)
+            val endCoords = IntArray(2)
+            val parentCoords = IntArray(2)
+
+            startView.getLocationInWindow(startCoords)
+            endView.getLocationInWindow(endCoords)
+            findViewById<View>(R.id.overlay_container).getLocationInWindow(parentCoords)
+
+            val startX = startCoords[0] - parentCoords[0]
+            val startY = startCoords[1] - parentCoords[1]
+            val endX = endCoords[0] - parentCoords[0]
+            val endY = endCoords[1] - parentCoords[1]
+
+            floatingToken.setColorFilter(color)
+            floatingToken.translationX = startX.toFloat()
+            floatingToken.translationY = startY.toFloat()
+            floatingToken.visibility = View.VISIBLE
+
+            floatingToken.animate()
+                .translationX(endX.toFloat())
+                .translationY(endY.toFloat())
+                .setDuration(1200)
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        floatingToken.visibility = View.GONE
+                        continuation.resume(Unit)
+                    }
+                })
+                .start()
+        } else {
+            continuation.resume(Unit)
         }
     }
 
@@ -668,11 +818,11 @@ class MainActivity : AppCompatActivity() {
         textOverlayPop.visibility = View.VISIBLE
         val anim = AnimationUtils.loadAnimation(this, animRes)
         anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
             override fun onAnimationEnd(animation: android.view.animation.Animation?) {
                 textOverlayPop.visibility = View.GONE
             }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         textOverlayPop.startAnimation(anim)
     }
@@ -682,11 +832,11 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop.visibility = View.VISIBLE
         val anim = AnimationUtils.loadAnimation(this, R.anim.pop_image_fade)
         anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
             override fun onAnimationEnd(animation: android.view.animation.Animation?) {
                 imgOverlayPop.visibility = View.GONE
             }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         imgOverlayPop.startAnimation(anim)
     }
@@ -1044,8 +1194,34 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         app:layout_constraintStart_toStartOf="@id/recycler_board"
         app:layout_constraintEnd_toEndOf="@id/recycler_board">
 
-        <TextView android:id="@+id/text_overlay_pop" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:visibility="gone" android:textSize="50sp" android:textColor="#FFF" android:textStyle="bold"/>
-        <ImageView android:id="@+id/img_overlay_pop" android:layout_width="300dp" android:layout_height="300dp" android:layout_gravity="center" android:visibility="gone"/>
+        <TextView
+            android:id="@+id/text_overlay_pop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            android:textSize="70sp"
+            android:textColor="#FFF"
+            android:textStyle="bold"
+            android:shadowColor="#000000"
+            android:shadowDx="0"
+            android:shadowDy="0"
+            android:shadowRadius="20"/>
+
+        <ImageView
+            android:id="@+id/img_overlay_pop"
+            android:layout_width="350dp"
+            android:layout_height="350dp"
+            android:layout_gravity="center"
+            android:visibility="gone"/>
+
+        <VideoView
+            android:id="@+id/video_overlay_pop"
+            android:layout_width="350dp"
+            android:layout_height="350dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
     </FrameLayout>
 
     <LinearLayout
@@ -1080,6 +1256,8 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="8dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="8dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
         <TextView android:text="P1" android:textColor="#FF0000" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
@@ -1092,6 +1270,8 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
         <TextView android:text="P2" android:textColor="#0000FF" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
@@ -1122,10 +1302,8 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:orientation="vertical"
         android:elevation="30dp"
         android:visibility="visible">
-
-        <TextView android:text="SNALD BATTLE" android:textSize="40sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
-        <TextView android:text="Select Players" android:textSize="24sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="20dp"/>
-
+        <TextView android:text="SNALD BATTLE" android:textSize="40sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp" android:textColor="#000000"/>
+        <TextView android:text="Select Players" android:textSize="24sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="20dp" android:textColor="#000000"/>
         <Button android:id="@+id/btn_2_players" android:text="2 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
         <Button android:id="@+id/btn_3_players" android:text="3 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
         <Button android:id="@+id/btn_4_players" android:text="4 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
@@ -1140,7 +1318,6 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:orientation="vertical"
         android:elevation="40dp"
         android:visibility="gone">
-
         <TextView android:text="GAME OVER!" android:textColor="#FFF" android:textSize="50sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
         <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:backgroundTint="#FFB300" android:layout_width="200dp" android:layout_height="wrap_content"/>
     </LinearLayout>
@@ -1156,7 +1333,8 @@ FILE PATH: \app\src\main\res\layout\item_square.xml
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:padding="2dp">
 
     <TextView
         android:id="@+id/text_square_number"
@@ -1167,10 +1345,46 @@ FILE PATH: \app\src\main\res\layout\item_square.xml
         android:textSize="10sp" />
 
     <ImageView
-        android:id="@+id/image_player"
+        android:id="@+id/token_center"
         android:layout_width="42dp"
         android:layout_height="42dp"
         android:layout_gravity="center"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_1"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_2"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_3"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_4"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="2dp"
         android:src="@drawable/img_token_player"
         android:visibility="gone" />
 

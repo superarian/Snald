@@ -1,5 +1,7 @@
 package com.bytemantis.snald
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AnimationUtils
@@ -20,6 +22,8 @@ import com.bytemantis.snald.ui.GameViewModel
 import com.bytemantis.snald.ui.SoundManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,13 +31,14 @@ class MainActivity : AppCompatActivity() {
     private val adapter = BoardAdapter()
     private lateinit var soundManager: SoundManager
 
-    // Dice Views Map
+    private lateinit var recyclerBoard: RecyclerView
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
     // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
+    private lateinit var floatingToken: ImageView
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
 
@@ -50,9 +55,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
-        val recycler = findViewById<RecyclerView>(R.id.recycler_board)
-        recycler.layoutManager = GridLayoutManager(this, 10)
-        recycler.adapter = adapter
+        recyclerBoard = findViewById(R.id.recycler_board)
+        recyclerBoard.layoutManager = GridLayoutManager(this, 10)
+        recyclerBoard.adapter = adapter
 
         diceViews = mapOf(
             1 to findViewById(R.id.dice_p1),
@@ -64,6 +69,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.text_main_status)
         textOverlayPop = findViewById(R.id.text_overlay_pop)
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
+        floatingToken = findViewById(R.id.floating_token)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
 
@@ -95,7 +101,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // 1. Dice Roll
+        // FIX 1: OBSERVE PLAYERS (Shows tokens immediately on start)
+        viewModel.players.observe(this) { players ->
+            if (!isAnimatingMove) {
+                adapter.updatePlayers(players)
+            }
+        }
+
+        // 2. Dice Roll
         viewModel.diceValue.observe(this) { dice ->
             val activeId = viewModel.activePlayerId.value ?: return@observe
             val activeDiceView = diceViews[activeId] ?: return@observe
@@ -110,13 +123,13 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
-        // 2. Turn Change - FIXED: Removed isAnimatingMove check so text updates instantly
+        // 3. Turn Change
         viewModel.activePlayerId.observe(this) { id ->
             updateStatusText(id)
             highlightActiveDice(id)
         }
 
-        // 3. Collision (Kill)
+        // 4. Collision (Kill)
         viewModel.collisionEvent.observe(this) { killedPlayer ->
             if (killedPlayer != null) {
                 soundManager.playSnakeBite()
@@ -125,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 4. Game Over
+        // 5. Game Over
         viewModel.gameOver.observe(this) { isOver ->
             if (isOver) {
                 soundManager.playWin()
@@ -203,26 +216,101 @@ class MainActivity : AppCompatActivity() {
                 delay(200)
             }
 
-            delay(300)
-            handleMoveResult(moveResult)
-
-            // 3. Logic: Check for Snakes/Ladders Destination
+            // 3. Logic & Animations
             var finalPos = currentVisualPosition
-            if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
-            if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
 
-            // 4. FIX: Visually move the token THERE first, BEFORE ending turn
-            if (finalPos != currentVisualPosition) {
-                activePlayer.currentPosition = finalPos
-                adapter.updatePlayers(players)
-                delay(500)
+            if (moveResult != null) {
+                // If Snake/Ladder, delay, pop, then SLIDE
+                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                    delay(300)
+                    handleMoveResult(moveResult) // Pop
+
+                    delay(1000) // Wait for pop
+
+                    if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
+                    if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
+
+                    // PERFORM THE SLIDE with CORRECT COORDINATES
+                    animateSlide(currentVisualPosition, finalPos, activePlayer.color)
+                } else {
+                    handleMoveResult(moveResult)
+                    delay(500)
+                }
             }
 
-            // 5. Update and Unlock
-            // NOTE: We unlock the animation flag BEFORE telling ViewModel to switch turns,
-            // so the Observer can trigger the UI update correctly.
+            // 4. Final Sync
+            activePlayer.currentPosition = finalPos
+            adapter.updatePlayers(players)
+
             isAnimatingMove = false
             viewModel.updatePositionAndNextTurn(finalPos)
+        }
+    }
+
+    // --- FIX: Coordinate Mapping (Maps Square# to Screen Index) ---
+    private fun getAdapterPositionForSquare(squareNumber: Int): Int {
+        if (squareNumber < 1 || squareNumber > 100) return 0
+
+        // 1. Find the bottom-up row (0-9)
+        val bottomUpRow = (squareNumber - 1) / 10
+
+        // 2. Find the column (0-9) based on Zig-Zag
+        val col = if (bottomUpRow % 2 == 0) {
+            // Even Row (0, 2): Left to Right
+            (squareNumber - 1) % 10
+        } else {
+            // Odd Row (1, 3): Right to Left
+            9 - ((squareNumber - 1) % 10)
+        }
+
+        // 3. Convert to Top-Down RecyclerView Row (0 is top)
+        val row = 9 - bottomUpRow
+
+        // 4. Final Index
+        return (row * 10) + col
+    }
+
+    private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
+
+        // USE THE HELPER TO FIND CORRECT VIEW INDICES
+        val startIndex = getAdapterPositionForSquare(startSquare)
+        val endIndex = getAdapterPositionForSquare(endSquare)
+
+        val startView = recyclerBoard.layoutManager?.findViewByPosition(startIndex)
+        val endView = recyclerBoard.layoutManager?.findViewByPosition(endIndex)
+
+        if (startView != null && endView != null) {
+            val startCoords = IntArray(2)
+            val endCoords = IntArray(2)
+            val parentCoords = IntArray(2)
+
+            startView.getLocationInWindow(startCoords)
+            endView.getLocationInWindow(endCoords)
+            findViewById<View>(R.id.overlay_container).getLocationInWindow(parentCoords)
+
+            val startX = startCoords[0] - parentCoords[0]
+            val startY = startCoords[1] - parentCoords[1]
+            val endX = endCoords[0] - parentCoords[0]
+            val endY = endCoords[1] - parentCoords[1]
+
+            floatingToken.setColorFilter(color)
+            floatingToken.translationX = startX.toFloat()
+            floatingToken.translationY = startY.toFloat()
+            floatingToken.visibility = View.VISIBLE
+
+            floatingToken.animate()
+                .translationX(endX.toFloat())
+                .translationY(endY.toFloat())
+                .setDuration(1200)
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        floatingToken.visibility = View.GONE
+                        continuation.resume(Unit)
+                    }
+                })
+                .start()
+        } else {
+            continuation.resume(Unit)
         }
     }
 
@@ -238,7 +326,7 @@ class MainActivity : AppCompatActivity() {
                 triggerPopText("YAY!", 0xFF4CAF50.toInt(), R.anim.pop_zoom_fade)
             }
             is GameEngine.MoveResult.StarCollected -> {
-                soundManager.playStarCollect() // Uses new fade function
+                soundManager.playStarCollect()
                 triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
             is GameEngine.MoveResult.StarUsed -> {
@@ -259,11 +347,11 @@ class MainActivity : AppCompatActivity() {
         textOverlayPop.visibility = View.VISIBLE
         val anim = AnimationUtils.loadAnimation(this, animRes)
         anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
             override fun onAnimationEnd(animation: android.view.animation.Animation?) {
                 textOverlayPop.visibility = View.GONE
             }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         textOverlayPop.startAnimation(anim)
     }
@@ -273,11 +361,11 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop.visibility = View.VISIBLE
         val anim = AnimationUtils.loadAnimation(this, R.anim.pop_image_fade)
         anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
             override fun onAnimationEnd(animation: android.view.animation.Animation?) {
                 imgOverlayPop.visibility = View.GONE
             }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         imgOverlayPop.startAnimation(anim)
     }

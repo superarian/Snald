@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:padding="2dp">
 
     <TextView
         android:id="@+id/text_square_number"
@@ -12,10 +13,46 @@
         android:textSize="10sp" />
 
     <ImageView
-        android:id="@+id/image_player"
+        android:id="@+id/token_center"
         android:layout_width="42dp"
         android:layout_height="42dp"
         android:layout_gravity="center"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_1"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_2"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_3"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_4"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="2dp"
         android:src="@drawable/img_token_player"
         android:visibility="gone" />
 
