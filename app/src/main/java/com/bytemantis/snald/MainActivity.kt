@@ -133,13 +133,15 @@ class MainActivity : AppCompatActivity() {
             highlightActiveDice(id)
         }
 
-        // 4. Collision (Kill) - UPDATED TO PLAY VIDEO
+        // 4. Collision (Kill) - UPDATED WITH WAIT LOGIC
         viewModel.collisionEvent.observe(this) { killedPlayer ->
             if (killedPlayer != null) {
-                // Play the hammer_kill video
-                triggerPopVideo(R.raw.hammer_kill)
-
                 Toast.makeText(this, "P${killedPlayer.id} KILLED! Back to Start!", Toast.LENGTH_SHORT).show()
+
+                // Play video, and Resume Game ONLY after video finishes
+                triggerPopVideo(R.raw.hammer_kill) {
+                    viewModel.resumeGameAfterKill()
+                }
             }
         }
 
@@ -239,7 +241,14 @@ class MainActivity : AppCompatActivity() {
                     animateSlide(currentVisualPosition, finalPos, activePlayer.color)
                 } else {
                     handleMoveResult(moveResult)
-                    delay(500)
+
+                    // --- UPDATED TIMING LOGIC ---
+                    if (moveResult is GameEngine.MoveResult.StarUsed) {
+                        // Wait for full Smiley Animation (3.6s) before ending turn
+                        delay(3600)
+                    } else {
+                        delay(500)
+                    }
                 }
             }
 
@@ -345,18 +354,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- NEW: VIDEO POPUP LOGIC ---
-    private fun triggerPopVideo(videoResId: Int) {
-        val uri = Uri.parse("android.resource://$packageName/$videoResId")
-        videoOverlayPop.setVideoURI(uri)
-        videoOverlayPop.setZOrderOnTop(true) // Ensure it shows above surface
-        videoOverlayPop.visibility = View.VISIBLE
+    // --- UPDATED: VIDEO POPUP LOGIC WITH CALLBACK ---
+    private fun triggerPopVideo(videoResId: Int, onComplete: () -> Unit) {
+        try {
+            val uri = Uri.parse("android.resource://$packageName/$videoResId")
+            videoOverlayPop.setVideoURI(uri)
+            videoOverlayPop.setZOrderOnTop(true)
+            videoOverlayPop.visibility = View.VISIBLE
 
-        videoOverlayPop.setOnCompletionListener {
+            videoOverlayPop.setOnCompletionListener {
+                videoOverlayPop.visibility = View.GONE
+                onComplete() // Signal that video is done
+            }
+
+            videoOverlayPop.start()
+        } catch (e: Exception) {
+            e.printStackTrace()
             videoOverlayPop.visibility = View.GONE
+            onComplete() // Even if crash, ensure game resumes
         }
-
-        videoOverlayPop.start()
     }
 
     private fun triggerPopText(text: String, color: Int, animRes: Int) {

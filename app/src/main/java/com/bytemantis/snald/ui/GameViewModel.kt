@@ -95,15 +95,31 @@ class GameViewModel : ViewModel() {
                 // Enemy survives, loses star
                 enemy.hasStar = false
                 _collisionEvent.value = null // No kill, just update state
+                // Safe to proceed to next turn immediately if no video plays
+                if (_gameOver.value != true) nextTurn()
             } else {
-                // KILL! Enemy goes to 1
+                // KILL!
+                // Enemy goes to 1
                 enemy.currentPosition = 1
                 _collisionEvent.value = enemy
+
+                // STOP! Do NOT call nextTurn().
+                // We wait for MainActivity to play the video and call resumeGameAfterKill()
+                _players.value = currentList // Refresh UI to show enemy back at start
+                return
+            }
+        } else {
+            // No collision, normal turn end
+            _players.value = currentList // Refresh UI
+
+            if (_gameOver.value != true) {
+                nextTurn()
             }
         }
+    }
 
-        _players.value = currentList // Refresh UI
-
+    // NEW: Called by UI when the "Kill Video" finishes
+    fun resumeGameAfterKill() {
         if (_gameOver.value != true) {
             nextTurn()
         }
