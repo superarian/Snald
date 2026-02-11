@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import kotlin.math.ceil
 
 class MainActivity : AppCompatActivity() {
 
@@ -37,10 +38,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
-    // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
-    private lateinit var videoOverlayPop: VideoView // NEW: Video Overlay
+    private lateinit var videoOverlayPop: VideoView
     private lateinit var floatingToken: ImageView
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
@@ -52,7 +52,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         soundManager = SoundManager(this)
-
         setupUI()
         setupObservers()
     }
@@ -72,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.text_main_status)
         textOverlayPop = findViewById(R.id.text_overlay_pop)
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
-        videoOverlayPop = findViewById(R.id.video_overlay_pop) // NEW
+        videoOverlayPop = findViewById(R.id.video_overlay_pop)
         floatingToken = findViewById(R.id.floating_token)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
@@ -87,7 +86,7 @@ class MainActivity : AppCompatActivity() {
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
-                if (!isAnimatingMove && viewModel.activePlayerId.value == id) {
+                if (!isAnimatingMove && !viewModel.isAnimationLocked && viewModel.activePlayerId.value == id) {
                     val player = viewModel.players.value?.find { it.id == id } ?: return@setOnClickListener
                     currentVisualPosition = player.currentPosition
                     isAnimatingMove = true
@@ -105,14 +104,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // 1. Observe Players
         viewModel.players.observe(this) { players ->
-            if (!isAnimatingMove) {
+            if (!isAnimatingMove && !viewModel.isAnimationLocked) {
                 adapter.updatePlayers(players)
             }
         }
 
-        // 2. Dice Roll
         viewModel.diceValue.observe(this) { dice ->
             val activeId = viewModel.activePlayerId.value ?: return@observe
             val activeDiceView = diceViews[activeId] ?: return@observe
@@ -127,25 +124,26 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
-        // 3. Turn Change
         viewModel.activePlayerId.observe(this) { id ->
             updateStatusText(id)
             highlightActiveDice(id)
         }
 
-        // 4. Collision (Kill) - UPDATED WITH WAIT LOGIC
-        viewModel.collisionEvent.observe(this) { killedPlayer ->
-            if (killedPlayer != null) {
-                Toast.makeText(this, "P${killedPlayer.id} KILLED! Back to Start!", Toast.LENGTH_SHORT).show()
+        // --- COLLISION LOGIC ---
+        viewModel.collisionEvent.observe(this) { event ->
+            if (event != null) {
+                val (killedPlayer, fatalPos) = event
 
-                // Play video, and Resume Game ONLY after video finishes
+                Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
+
+                // 1. Play Video (Player is still visibly at fatalPos)
                 triggerPopVideo(R.raw.hammer_kill) {
-                    viewModel.resumeGameAfterKill()
+                    // 2. Video Done? Run Optimized Slide
+                    animateDeathSlideOptimized(killedPlayer, fatalPos)
                 }
             }
         }
 
-        // 5. Game Over
         viewModel.gameOver.observe(this) { isOver ->
             if (isOver) {
                 soundManager.playWin()
@@ -158,13 +156,72 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // --- NEW OPTIMIZED FUNCTION ---
+    private fun animateDeathSlideOptimized(player: Player, startPos: Int) {
+        lifecycleScope.launch {
+            // Constant Duration: 500ms (0.5 seconds)
+            val totalDuration = 500L
+            val frameTime = 16L // Standard 60fps frame time
+
+            // Calculate total distance
+            val distance = startPos - 1
+            if (distance <= 0) {
+                viewModel.finalizeKill(player.id)
+                return@launch
+            }
+
+            // How many visual updates can we fit in 500ms?
+            // 500ms / 16ms = ~31 updates max
+            val maxUpdates = (totalDuration / frameTime).toInt()
+
+            // Calculate "Step Size" (how many squares to skip to maintain speed)
+            // e.g., Distance 90 / 30 updates = Skip 3 squares per frame
+            var stepSize = ceil(distance.toDouble() / maxUpdates).toInt()
+            if (stepSize < 1) stepSize = 1
+
+            var currentPos = startPos
+
+            // THE LOOP
+            while (currentPos > 1) {
+                val oldPos = currentPos
+
+                // Move back
+                currentPos -= stepSize
+                if (currentPos < 1) currentPos = 1
+
+                // Update Player Object
+                player.currentPosition = currentPos
+
+                // *** OPTIMIZATION FIX ***
+                // Instead of redrawing everything (notifyDataSetChanged),
+                // we only redraw the Old Square (to clear it) and New Square (to show it).
+                val oldIndex = getAdapterPositionForSquare(oldPos)
+                val newIndex = getAdapterPositionForSquare(currentPos)
+
+                adapter.notifyItemChanged(oldIndex) // Clear old
+                adapter.notifyItemChanged(newIndex) // Show new
+
+                delay(frameTime) // Wait 16ms
+            }
+
+            // Ensure final state
+            player.currentPosition = 1
+            adapter.notifyDataSetChanged() // Final sync
+
+            // Unlock and Next Turn
+            viewModel.finalizeKill(player.id)
+        }
+    }
+
+    // ... (Existing helper functions remain unchanged) ...
+
     private fun updateStatusText(playerId: Int) {
         statusText.text = "Player $playerId's Turn"
         val color = when(playerId) {
-            1 -> 0xFFFF0000.toInt() // Red
-            2 -> 0xFF0000FF.toInt() // Blue
-            3 -> 0xFF00FF00.toInt() // Green
-            4 -> 0xFFFFFF00.toInt() // Yellow
+            1 -> 0xFFFF0000.toInt()
+            2 -> 0xFF0000FF.toInt()
+            3 -> 0xFF00FF00.toInt()
+            4 -> 0xFFFFFF00.toInt()
             else -> 0xFFFFFFFF.toInt()
         }
         statusText.setTextColor(color)
@@ -205,7 +262,6 @@ class MainActivity : AppCompatActivity() {
             val activePlayer = players.find { it.id == activeId } ?: return@launch
             val moveResult = viewModel.lastMoveResult.value
 
-            // 1. Check Overshot
             if (moveResult is GameEngine.MoveResult.Stay) {
                 Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
                 delay(500)
@@ -214,7 +270,6 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // 2. Hop Loop
             for (i in 1..stepsToMove) {
                 currentVisualPosition++
                 activePlayer.currentPosition = currentVisualPosition
@@ -223,28 +278,23 @@ class MainActivity : AppCompatActivity() {
                 delay(200)
             }
 
-            // 3. Logic & Animations
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                // If Snake/Ladder, delay, pop, then SLIDE
                 if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
-                    handleMoveResult(moveResult) // Pop Image
+                    handleMoveResult(moveResult)
 
-                    delay(1000) // Wait for pop
+                    delay(1000)
 
                     if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
                     if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
 
-                    // PERFORM THE SLIDE with CORRECT COORDINATES
                     animateSlide(currentVisualPosition, finalPos, activePlayer.color)
                 } else {
                     handleMoveResult(moveResult)
 
-                    // --- UPDATED TIMING LOGIC ---
                     if (moveResult is GameEngine.MoveResult.StarUsed) {
-                        // Wait for full Smiley Animation (3.6s) before ending turn
                         delay(3600)
                     } else {
                         delay(500)
@@ -252,7 +302,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 4. Final Sync
             activePlayer.currentPosition = finalPos
             adapter.updatePlayers(players)
 
@@ -261,33 +310,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- Coordinate Mapping (Maps Square# to Screen Index) ---
     private fun getAdapterPositionForSquare(squareNumber: Int): Int {
         if (squareNumber < 1 || squareNumber > 100) return 0
-
-        // 1. Find the bottom-up row (0-9)
         val bottomUpRow = (squareNumber - 1) / 10
-
-        // 2. Find the column (0-9) based on Zig-Zag
         val col = if (bottomUpRow % 2 == 0) {
-            // Even Row (0, 2): Left to Right
             (squareNumber - 1) % 10
         } else {
-            // Odd Row (1, 3): Right to Left
             9 - ((squareNumber - 1) % 10)
         }
-
-        // 3. Convert to Top-Down RecyclerView Row (0 is top)
         val row = 9 - bottomUpRow
-
-        // 4. Final Index
         return (row * 10) + col
     }
 
     private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
         val startIndex = getAdapterPositionForSquare(startSquare)
         val endIndex = getAdapterPositionForSquare(endSquare)
-
         val startView = recyclerBoard.layoutManager?.findViewByPosition(startIndex)
         val endView = recyclerBoard.layoutManager?.findViewByPosition(endIndex)
 
@@ -326,7 +363,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Handles standard game events (Snakes, Ladders, Stars)
     private fun handleMoveResult(result: GameEngine.MoveResult?) {
         if (result == null) return
         when (result) {
@@ -354,7 +390,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- UPDATED: VIDEO POPUP LOGIC WITH CALLBACK ---
     private fun triggerPopVideo(videoResId: Int, onComplete: () -> Unit) {
         try {
             val uri = Uri.parse("android.resource://$packageName/$videoResId")
@@ -364,14 +399,14 @@ class MainActivity : AppCompatActivity() {
 
             videoOverlayPop.setOnCompletionListener {
                 videoOverlayPop.visibility = View.GONE
-                onComplete() // Signal that video is done
+                onComplete()
             }
 
             videoOverlayPop.start()
         } catch (e: Exception) {
             e.printStackTrace()
             videoOverlayPop.visibility = View.GONE
-            onComplete() // Even if crash, ensure game resumes
+            onComplete()
         }
     }
 
