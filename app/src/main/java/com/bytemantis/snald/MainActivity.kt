@@ -26,7 +26,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
-import kotlin.math.ceil
 
 class MainActivity : AppCompatActivity() {
 
@@ -136,10 +135,10 @@ class MainActivity : AppCompatActivity() {
 
                 Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
 
-                // 1. Play Video (Player is still visibly at fatalPos)
+                // 1. Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    // 2. Video Done? Run Optimized Slide
-                    animateDeathSlideOptimized(killedPlayer, fatalPos)
+                    // 2. Video Done? Run Slower Constant Speed Slide
+                    animateDeathSlideSmooth(killedPlayer, fatalPos)
                 }
             }
         }
@@ -156,64 +155,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- NEW OPTIMIZED FUNCTION ---
-    private fun animateDeathSlideOptimized(player: Player, startPos: Int) {
+    // --- UPDATED: 80ms SLOW SLIDE ---
+    private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
         lifecycleScope.launch {
-            // Constant Duration: 500ms (0.5 seconds)
-            val totalDuration = 500L
-            val frameTime = 16L // Standard 60fps frame time
-
-            // Calculate total distance
-            val distance = startPos - 1
-            if (distance <= 0) {
-                viewModel.finalizeKill(player.id)
-                return@launch
-            }
-
-            // How many visual updates can we fit in 500ms?
-            // 500ms / 16ms = ~31 updates max
-            val maxUpdates = (totalDuration / frameTime).toInt()
-
-            // Calculate "Step Size" (how many squares to skip to maintain speed)
-            // e.g., Distance 90 / 30 updates = Skip 3 squares per frame
-            var stepSize = ceil(distance.toDouble() / maxUpdates).toInt()
-            if (stepSize < 1) stepSize = 1
+            // CONSTANT VELOCITY SETTINGS (UPDATED TO 80ms)
+            // Step Size: 2 squares per update
+            // Frame Delay: 80ms (approx 12.5 frames per second)
+            // This is significantly slower, making the backward slide very clear.
+            val stepSize = 2
+            val frameDelay = 80L
 
             var currentPos = startPos
 
-            // THE LOOP
             while (currentPos > 1) {
                 val oldPos = currentPos
 
-                // Move back
+                // Move backward by stepSize
                 currentPos -= stepSize
-                if (currentPos < 1) currentPos = 1
+                if (currentPos < 1) currentPos = 1 // Clamp to 1
 
                 // Update Player Object
                 player.currentPosition = currentPos
 
-                // *** OPTIMIZATION FIX ***
-                // Instead of redrawing everything (notifyDataSetChanged),
-                // we only redraw the Old Square (to clear it) and New Square (to show it).
+                // FAST UPDATE: Only redraw the 2 affected squares
                 val oldIndex = getAdapterPositionForSquare(oldPos)
                 val newIndex = getAdapterPositionForSquare(currentPos)
 
-                adapter.notifyItemChanged(oldIndex) // Clear old
-                adapter.notifyItemChanged(newIndex) // Show new
+                // Optimized update
+                adapter.notifyItemChanged(oldIndex)
+                adapter.notifyItemChanged(newIndex)
 
-                delay(frameTime) // Wait 16ms
+                delay(frameDelay)
             }
 
-            // Ensure final state
+            // Final Sync
             player.currentPosition = 1
-            adapter.notifyDataSetChanged() // Final sync
+            adapter.notifyDataSetChanged()
 
             // Unlock and Next Turn
             viewModel.finalizeKill(player.id)
         }
     }
-
-    // ... (Existing helper functions remain unchanged) ...
 
     private fun updateStatusText(playerId: Int) {
         statusText.text = "Player $playerId's Turn"
