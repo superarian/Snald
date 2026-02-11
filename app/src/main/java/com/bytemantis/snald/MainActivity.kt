@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
+    // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
     private lateinit var videoOverlayPop: VideoView
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         soundManager = SoundManager(this)
+
         setupUI()
         setupObservers()
     }
@@ -128,16 +130,15 @@ class MainActivity : AppCompatActivity() {
             highlightActiveDice(id)
         }
 
-        // --- COLLISION LOGIC ---
         viewModel.collisionEvent.observe(this) { event ->
             if (event != null) {
                 val (killedPlayer, fatalPos) = event
 
                 Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
 
-                // 1. Play Video
+                // Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    // 2. Video Done? Run Slower Constant Speed Slide
+                    // Video Done -> Start Slide
                     animateDeathSlideSmooth(killedPlayer, fatalPos)
                 }
             }
@@ -155,44 +156,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- UPDATED: 80ms SLOW SLIDE ---
+    // --- FINAL UPDATED: 100ms SLOW SLIDE + STOP SFX ---
     private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
         lifecycleScope.launch {
-            // CONSTANT VELOCITY SETTINGS (UPDATED TO 80ms)
-            // Step Size: 2 squares per update
-            // Frame Delay: 80ms (approx 12.5 frames per second)
-            // This is significantly slower, making the backward slide very clear.
+
+            // 1. Play Sound and KEEP the ID
+            val streamId = soundManager.playSlideBack()
+
+            // 2. Settings: 100ms delay (Very deliberate slow slide)
             val stepSize = 2
-            val frameDelay = 80L
+            val frameDelay = 100L
 
             var currentPos = startPos
 
+            // 3. Loop
             while (currentPos > 1) {
                 val oldPos = currentPos
 
-                // Move backward by stepSize
                 currentPos -= stepSize
-                if (currentPos < 1) currentPos = 1 // Clamp to 1
+                if (currentPos < 1) currentPos = 1
 
-                // Update Player Object
                 player.currentPosition = currentPos
 
-                // FAST UPDATE: Only redraw the 2 affected squares
                 val oldIndex = getAdapterPositionForSquare(oldPos)
                 val newIndex = getAdapterPositionForSquare(currentPos)
 
-                // Optimized update
                 adapter.notifyItemChanged(oldIndex)
                 adapter.notifyItemChanged(newIndex)
 
                 delay(frameDelay)
             }
 
-            // Final Sync
+            // 4. STOP SOUND EXACTLY HERE
+            soundManager.stop(streamId)
+
+            // 5. Final Sync
             player.currentPosition = 1
             adapter.notifyDataSetChanged()
 
-            // Unlock and Next Turn
+            // 6. Resume Game
             viewModel.finalizeKill(player.id)
         }
     }

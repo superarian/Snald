@@ -11,7 +11,7 @@ import com.bytemantis.snald.R
 class SoundManager(context: Context) {
 
     private val soundPool: SoundPool
-    // FIX: Using SparseIntArray (Better performance, fixes 'get' error)
+    // Correct initialization
     private val soundMap = SparseIntArray()
 
     init {
@@ -25,7 +25,7 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load sounds using .put()
+        // Load all sounds
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -33,17 +33,28 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_star_collect, soundPool.load(context, R.raw.sfx_star_collect, 1))
         soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
+
+        // Ensure you have 'sfx_slide_back.mp3' in res/raw/
+        soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
     }
 
-    fun playDiceRoll() = play(R.raw.sfx_dice_roll)
-    fun playHop() = play(R.raw.sfx_hop)
-    fun playSnakeBite() = play(R.raw.sfx_snake_bite)
-    fun playLadderClimb() = play(R.raw.sfx_ladder_climb)
-    fun playStarUsed() = play(R.raw.sfx_star_use)
-    fun playWin() = play(R.raw.sfx_win)
+    // UPDATED: Now returns Int (Stream ID)
+    fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
+    fun playHop(): Int = play(R.raw.sfx_hop)
+    fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
+    fun playLadderClimb(): Int = play(R.raw.sfx_ladder_climb)
+    fun playStarUsed(): Int = play(R.raw.sfx_star_use)
+    fun playWin(): Int = play(R.raw.sfx_win)
+    fun playSlideBack(): Int = play(R.raw.sfx_slide_back)
+
+    // NEW: Stop a specific sound
+    fun stop(streamId: Int) {
+        if (streamId != 0) {
+            soundPool.stop(streamId)
+        }
+    }
 
     fun playStarCollect() {
-        // FIX: Use .get()
         val soundId = soundMap.get(R.raw.sfx_star_collect)
         if (soundId == 0) return
 
@@ -63,11 +74,12 @@ class SoundManager(context: Context) {
         fadeAnim.start()
     }
 
-    private fun play(resId: Int) {
-        // FIX: Use .get() and check for 0 (SparseIntArray default)
+    // UPDATED: Returns Stream ID
+    private fun play(resId: Int): Int {
         val soundId = soundMap.get(resId)
-        if (soundId == 0) return
+        if (soundId == 0) return 0
 
-        soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
+        // Returns the stream ID (non-zero if successful)
+        return soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
     }
 }
