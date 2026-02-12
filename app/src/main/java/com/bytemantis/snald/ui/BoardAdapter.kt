@@ -70,26 +70,24 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
             // 2. Pac-Men on this square
             val pacmenHere = players.filter { it.pacmanPosition == number }
 
-            // LOGIC: If a Pac-Man is here, we must show it.
-            // If both Player and Pac-Man are here, we might need clustered view.
-
             val totalItems = playersHere + pacmenHere
 
             if (totalItems.isEmpty()) return
 
             if (totalItems.size == 1) {
-                // Single Item Mode
+                // == Single Item Mode ==
                 val item = totalItems[0]
                 tokenCenter.visibility = View.VISIBLE
-                tokenCenter.setColorFilter(item.color)
+                tokenCenter.setColorFilter(item.color) // Tint it P1/P2/P3/P4 color
 
-                // Distinguish Pac-Man from Player visually
                 if (pacmenHere.contains(item)) {
-                    // It's a Pac-Man! Rotate it or Scale it
-                    tokenCenter.rotation = 180f // Upside down logic?
-                    tokenCenter.scaleX = 0.7f   // Make it look meaner/smaller?
+                    // [UPDATED] It's a Pac-Man! Use custom image.
+                    tokenCenter.setImageResource(R.drawable.img_pacman)
+                    tokenCenter.rotation = 0f
+                    tokenCenter.scaleX = 1.0f
                 } else {
                     // Normal Player
+                    tokenCenter.setImageResource(R.drawable.img_token_player)
                     tokenCenter.rotation = 0f
                     tokenCenter.scaleX = 1.0f
 
@@ -99,7 +97,7 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
                     }
                 }
             } else {
-                // Multi Mode (Cluster)
+                // == Multi Mode (Cluster) ==
                 for (i in totalItems.indices) {
                     if (i < smallTokens.size) {
                         val tokenView = smallTokens[i]
@@ -109,10 +107,14 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
                         tokenView.setColorFilter(item.color)
 
                         if (pacmenHere.contains(item)) {
-                            // Visual cue for Pac-Man in small view
-                            tokenView.rotation = 180f
-                        } else {
+                            // [UPDATED] Pac-Man in small view
+                            tokenView.setImageResource(R.drawable.img_pacman)
                             tokenView.rotation = 0f
+                        } else {
+                            // Player in small view
+                            tokenView.setImageResource(R.drawable.img_token_player)
+                            tokenView.rotation = 0f
+
                             if (item.hasShield) {
                                 val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
                                 tokenView.startAnimation(pulse)
