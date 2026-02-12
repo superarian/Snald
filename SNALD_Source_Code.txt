@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/12/2026 14:52:06
+EXPORT DATE: 02/12/2026 20:09:33
 ============================================
 
 
@@ -62,21 +62,26 @@ class GameEngine {
         }
 
         if (newPosition == BoardConfig.BOARD_SIZE) {
-            // Player reached 100
             return MoveResult.Win(newPosition)
         }
 
         // 1. Check for Star
         if (BoardConfig.STARS.contains(newPosition)) {
-            player.hasStar = true
+            player.starCount++
+
+            // NEW: Spawn Pac-Man if 2nd star and not already active
+            if (player.starCount >= 2 && player.pacmanPosition == 0) {
+                player.pacmanPosition = 99 // Spawn at 99
+                return MoveResult.PacmanSpawned(newPosition)
+            }
             return MoveResult.StarCollected(newPosition)
         }
 
         // 2. Check for Snakes
         if (BoardConfig.SNAKES.containsKey(newPosition)) {
             val snakeTail = BoardConfig.SNAKES[newPosition]!!
-            if (player.hasStar) {
-                player.hasStar = false // Consume Star
+            if (player.hasShield) {
+                player.starCount-- // Consume 1 shield
                 return MoveResult.StarUsed(newPosition, "Star Shield Used!")
             } else {
                 return MoveResult.SnakeBite(newPosition, snakeTail)
@@ -92,14 +97,42 @@ class GameEngine {
         return MoveResult.NormalMove(newPosition)
     }
 
-    // NEW: Check if current player lands on enemies
+    // NEW: Logic for Pac-Man Movement
+    fun calculatePacmanMove(player: Player, diceValue: Int): PacmanResult {
+        if (player.pacmanPosition == 0) return PacmanResult.NoMove
+
+        // Reverse direction, double speed
+        val steps = diceValue * 2
+        var newPos = player.pacmanPosition - steps
+
+        if (newPos < 1) {
+            return PacmanResult.Despawn(player.pacmanPosition)
+        }
+        return PacmanResult.Move(from = player.pacmanPosition, to = newPos)
+    }
+
+    // NEW: Check if Pac-Man eats anyone
+    fun checkPacmanKills(hunter: Player, allPlayers: List<Player>): Player? {
+        if (hunter.pacmanPosition == 0) return null
+
+        for (enemy in allPlayers) {
+            // Can't eat self, finished players, or players at start/end
+            if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
+                if (enemy.currentPosition == hunter.pacmanPosition) {
+                    return enemy
+                }
+            }
+        }
+        return null
+    }
+
+    // Standard Collision (Player vs Player)
     fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
-        // Find any OTHER player on the same square (except at Start 1 or Goal 100)
         if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
 
         for (enemy in allPlayers) {
             if (enemy.id != activePlayer.id && !enemy.isFinished && enemy.currentPosition == activePlayer.currentPosition) {
-                return enemy // This enemy is in danger!
+                return enemy
             }
         }
         return null
@@ -110,9 +143,16 @@ class GameEngine {
         data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
         data class LadderClimb(val bottom: Int, val top: Int) : MoveResult()
         data class StarCollected(val at: Int) : MoveResult()
+        data class PacmanSpawned(val at: Int) : MoveResult() // NEW
         data class StarUsed(val at: Int, val msg: String) : MoveResult()
         data class Stay(val at: Int, val reason: String) : MoveResult()
         data class Win(val at: Int) : MoveResult()
+    }
+
+    sealed class PacmanResult {
+        object NoMove : PacmanResult()
+        data class Move(val from: Int, val to: Int) : PacmanResult()
+        data class Despawn(val from: Int) : PacmanResult()
     }
 }
 
@@ -129,9 +169,23 @@ data class Player(
     val name: String,
     val color: Int, // Hex Color Code
     var currentPosition: Int = 1,
-    var hasStar: Boolean = false,
-    var isFinished: Boolean = false // True if they won and are waiting for others
-)
+
+    // CHANGED: Star is now a counter (collect multiple)
+    var starCount: Int = 0,
+
+    // NEW: Pac-Man Entity State (0 = inactive)
+    var pacmanPosition: Int = 0,
+
+    var isFinished: Boolean = false
+) {
+    // Helper: Has at least 1 star for immunity
+    val hasShield: Boolean
+        get() = starCount >= 1
+
+    // Helper: Is Pac-Man currently on the board?
+    val isPacmanActive: Boolean
+        get() = pacmanPosition > 0
+}
 
 
 ################################################################
@@ -201,47 +255,63 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
         fun bind(number: Int, players: List<Player>) {
             textNumber.visibility = View.GONE
 
-            // 1. Find ALL players on this square (who haven't finished)
+            // RESET ALL VISIBILITY
+            tokenCenter.visibility = View.GONE
+            smallTokens.forEach { it.visibility = View.GONE; it.clearAnimation() }
+
+            // 1. Players on this square
             val playersHere = players.filter { it.currentPosition == number && !it.isFinished }
 
-            // Reset all visibilities first
-            tokenCenter.visibility = View.GONE
-            smallTokens.forEach {
-                it.visibility = View.GONE
-                it.clearAnimation()
-            }
+            // 2. Pac-Men on this square
+            val pacmenHere = players.filter { it.pacmanPosition == number }
 
-            if (playersHere.isEmpty()) {
-                return // Nothing to show
-            }
+            // LOGIC: If a Pac-Man is here, we must show it.
+            // If both Player and Pac-Man are here, we might need clustered view.
 
-            // 2. Decide Layout Mode
-            if (playersHere.size == 1) {
-                // --- SINGLE MODE ---
-                val p = playersHere[0]
+            val totalItems = playersHere + pacmenHere
+
+            if (totalItems.isEmpty()) return
+
+            if (totalItems.size == 1) {
+                // Single Item Mode
+                val item = totalItems[0]
                 tokenCenter.visibility = View.VISIBLE
-                tokenCenter.setColorFilter(p.color)
+                tokenCenter.setColorFilter(item.color)
 
-                // Star Pulse
-                if (p.hasStar) {
-                    val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                    tokenCenter.startAnimation(pulse)
+                // Distinguish Pac-Man from Player visually
+                if (pacmenHere.contains(item)) {
+                    // It's a Pac-Man! Rotate it or Scale it
+                    tokenCenter.rotation = 180f // Upside down logic?
+                    tokenCenter.scaleX = 0.7f   // Make it look meaner/smaller?
+                } else {
+                    // Normal Player
+                    tokenCenter.rotation = 0f
+                    tokenCenter.scaleX = 1.0f
+
+                    if (item.hasShield) {
+                        val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                        tokenCenter.startAnimation(pulse)
+                    }
                 }
             } else {
-                // --- MULTI/CLUSTER MODE ---
-                // Loop through players present and assign them to corner slots
-                for (i in playersHere.indices) {
+                // Multi Mode (Cluster)
+                for (i in totalItems.indices) {
                     if (i < smallTokens.size) {
                         val tokenView = smallTokens[i]
-                        val p = playersHere[i]
+                        val item = totalItems[i]
 
                         tokenView.visibility = View.VISIBLE
-                        tokenView.setColorFilter(p.color)
+                        tokenView.setColorFilter(item.color)
 
-                        // Star Pulse for specific small token
-                        if (p.hasStar) {
-                            val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                            tokenView.startAnimation(pulse)
+                        if (pacmenHere.contains(item)) {
+                            // Visual cue for Pac-Man in small view
+                            tokenView.rotation = 180f
+                        } else {
+                            tokenView.rotation = 0f
+                            if (item.hasShield) {
+                                val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                                tokenView.startAnimation(pulse)
+                            }
                         }
                     }
                 }
@@ -278,6 +348,10 @@ class GameViewModel : ViewModel() {
     private val _lastMoveResult = MutableLiveData<GameEngine.MoveResult>()
     val lastMoveResult: LiveData<GameEngine.MoveResult> = _lastMoveResult
 
+    // NEW: LiveData specifically for Pac-Man events
+    private val _pacmanMoveResult = MutableLiveData<GameEngine.PacmanResult>()
+    val pacmanMoveResult: LiveData<GameEngine.PacmanResult> = _pacmanMoveResult
+
     private val _diceValue = MutableLiveData<Int>()
     val diceValue: LiveData<Int> = _diceValue
 
@@ -287,12 +361,13 @@ class GameViewModel : ViewModel() {
     private val _gameOver = MutableLiveData<Boolean>()
     val gameOver: LiveData<Boolean> = _gameOver
 
-    private var totalPlayers = 2
     private var turnIndex = 0
     var isAnimationLocked = false
 
+    // Stores the dice roll to use for Pac-Man's turn
+    private var currentTurnRoll = 0
+
     fun startGame(playerCount: Int) {
-        totalPlayers = playerCount
         val newPlayers = ArrayList<Player>()
         newPlayers.add(Player(1, "P1", Color.RED))
         if (playerCount >= 2) newPlayers.add(Player(2, "P2", Color.BLUE))
@@ -306,8 +381,9 @@ class GameViewModel : ViewModel() {
         isAnimationLocked = false
     }
 
+    // PHASE 1: Start Turn
     fun rollDiceForActivePlayer() {
-        if (isAnimationLocked) return // Block input during animation
+        if (isAnimationLocked) return
 
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
@@ -317,67 +393,97 @@ class GameViewModel : ViewModel() {
             return
         }
 
-        val rolledNumber = (1..6).random()
-        _diceValue.value = rolledNumber
+        currentTurnRoll = (1..6).random()
+        _diceValue.value = currentTurnRoll
 
-        val result = engine.calculateMove(activePlayer, rolledNumber)
+        val result = engine.calculateMove(activePlayer, currentTurnRoll)
         _lastMoveResult.value = result
     }
 
-    fun updatePositionAndNextTurn(finalPos: Int) {
+    // PHASE 2: Player finished moving, check for Pac-Man
+    // THIS REPLACES 'updatePositionAndNextTurn'
+    fun onPlayerMoveFinished(finalPos: Int) {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
         activePlayer.currentPosition = finalPos
+        if (finalPos == 100) activePlayer.isFinished = true
 
-        if (finalPos == 100) {
-            activePlayer.isFinished = true
-            val activePlayersCount = currentList.count { !it.isFinished }
-            if (activePlayersCount <= 1) {
-                _gameOver.value = true
-            }
+        // If player has an active Pac-Man, calculate its move next
+        if (activePlayer.isPacmanActive) {
+            val pacResult = engine.calculatePacmanMove(activePlayer, currentTurnRoll)
+            _pacmanMoveResult.value = pacResult
+        } else {
+            // Skip Pac-Man phase
+            finalizeTurn()
+        }
+    }
+
+    // PHASE 3: Pac-Man finished moving
+    fun onPacmanMoveFinished(newPacPos: Int) {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+
+        activePlayer.pacmanPosition = newPacPos
+        _players.value = currentList // Sync UI
+
+        finalizeTurn()
+    }
+
+    // PHASE 4: Collisions & End Turn
+    private fun finalizeTurn() {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+
+        // 1. Player Collision
+        var enemy = engine.checkCollisions(activePlayer, currentList)
+
+        // 2. Pac-Man Collision (if Player didn't already hit someone)
+        if (enemy == null && activePlayer.isPacmanActive) {
+            enemy = engine.checkPacmanKills(activePlayer, currentList)
         }
 
-        val enemy = engine.checkCollisions(activePlayer, currentList)
         if (enemy != null) {
-            if (enemy.hasStar) {
-                enemy.hasStar = false
+            if (enemy.hasShield) {
+                enemy.starCount-- // Break Shield
                 _collisionEvent.value = null
-                if (_gameOver.value != true) nextTurn()
+                checkWinConditionOrNextTurn()
             } else {
                 // KILL LOGIC
                 val fatalPos = enemy.currentPosition
                 isAnimationLocked = true
-
-                // CRITICAL: We do NOT reset enemy.currentPosition to 1 yet.
-                // We keep them at the fatal position so the UI shows them there
-                // while the video plays.
-
                 _collisionEvent.value = Pair(enemy, fatalPos)
-                return
             }
         } else {
             _players.value = currentList
-            if (_gameOver.value != true) {
-                nextTurn()
-            }
+            checkWinConditionOrNextTurn()
         }
     }
 
-    // Called by UI AFTER the slide animation is 100% done
+    private fun checkWinConditionOrNextTurn() {
+        if (_gameOver.value == true) return
+
+        val currentList = _players.value ?: return
+        val activePlayersCount = currentList.count { !it.isFinished }
+
+        if (activePlayersCount <= 1) {
+            _gameOver.value = true
+        } else {
+            nextTurn()
+        }
+    }
+
     fun finalizeKill(killedPlayerId: Int) {
         val currentList = _players.value ?: return
         val enemy = currentList.find { it.id == killedPlayerId } ?: return
 
-        enemy.currentPosition = 1 // Now strictly set to 1
-        _players.value = currentList // Update LiveData to sync everyone
+        enemy.currentPosition = 1
+        _players.value = currentList
 
         isAnimationLocked = false
         _collisionEvent.value = null
 
-        if (_gameOver.value != true) {
-            nextTurn()
-        }
+        checkWinConditionOrNextTurn()
     }
 
     private fun nextTurn() {
@@ -648,6 +754,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // NEW: Observer for Pac-Man Movement
+        viewModel.pacmanMoveResult.observe(this) { result ->
+            if (result is GameEngine.PacmanResult.Move) {
+                animatePacmanMovement(result.from, result.to)
+            } else if (result is GameEngine.PacmanResult.Despawn) {
+                Toast.makeText(this, "Pac-Man vanished!", Toast.LENGTH_SHORT).show()
+                viewModel.onPacmanMoveFinished(0)
+            } else {
+                viewModel.onPacmanMoveFinished(0)
+            }
+        }
     }
 
     // --- FINAL UPDATED: 100ms SLOW SLIDE + STOP SFX ---
@@ -744,7 +862,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
                 delay(500)
                 isAnimatingMove = false
-                viewModel.updatePositionAndNextTurn(activePlayer.currentPosition)
+                viewModel.onPlayerMoveFinished(activePlayer.currentPosition)
                 return@launch
             }
 
@@ -784,7 +902,9 @@ class MainActivity : AppCompatActivity() {
             adapter.updatePlayers(players)
 
             isAnimatingMove = false
-            viewModel.updatePositionAndNextTurn(finalPos)
+
+            // ERROR WAS HERE: Replaced old method with new one
+            viewModel.onPlayerMoveFinished(finalPos)
         }
     }
 
@@ -915,6 +1035,31 @@ class MainActivity : AppCompatActivity() {
             override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         imgOverlayPop.startAnimation(anim)
+    }
+
+    // ADD THIS NEW FUNCTION to MainActivity class:
+    private fun animatePacmanMovement(from: Int, to: Int) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+
+            var currentPacPos = from
+
+            // Visual loop
+            while (currentPacPos > to) {
+                currentPacPos--
+                activePlayer.pacmanPosition = currentPacPos
+                adapter.updatePlayers(players)
+
+                // Use a sound if you have one, or reuse hop
+                soundManager.playHop()
+                delay(100) // Fast speed
+            }
+
+            delay(200)
+            viewModel.onPacmanMoveFinished(to)
+        }
     }
 }
 

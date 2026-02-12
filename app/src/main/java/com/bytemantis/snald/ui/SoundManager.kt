@@ -11,7 +11,6 @@ import com.bytemantis.snald.R
 class SoundManager(context: Context) {
 
     private val soundPool: SoundPool
-    // Correct initialization
     private val soundMap = SparseIntArray()
 
     init {
@@ -25,7 +24,7 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load all sounds
+        // Load all standard sounds
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -33,12 +32,14 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_star_collect, soundPool.load(context, R.raw.sfx_star_collect, 1))
         soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
-
-        // Ensure you have 'sfx_slide_back.mp3' in res/raw/
         soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
+
+        // NEW: Load Pac-Man Sounds
+        soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
+        soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
     }
 
-    // UPDATED: Now returns Int (Stream ID)
+    // Playback functions
     fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
     fun playHop(): Int = play(R.raw.sfx_hop)
     fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
@@ -47,7 +48,11 @@ class SoundManager(context: Context) {
     fun playWin(): Int = play(R.raw.sfx_win)
     fun playSlideBack(): Int = play(R.raw.sfx_slide_back)
 
-    // NEW: Stop a specific sound
+    // NEW: Pac-Man Playback
+    fun playPacmanEntry(): Int = play(R.raw.sfx_pacman_entry)
+    fun playPacmanMove(): Int = play(R.raw.sfx_pacman_move)
+
+    // Stop a specific sound stream
     fun stop(streamId: Int) {
         if (streamId != 0) {
             soundPool.stop(streamId)
@@ -74,7 +79,6 @@ class SoundManager(context: Context) {
         fadeAnim.start()
     }
 
-    // UPDATED: Returns Stream ID
     private fun play(resId: Int): Int {
         val soundId = soundMap.get(resId)
         if (soundId == 0) return 0

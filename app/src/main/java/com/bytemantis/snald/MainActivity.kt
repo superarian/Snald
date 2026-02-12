@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // NEW: Observer for Pac-Man Movement
+        // Observer for Pac-Man Movement
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
                 animatePacmanMovement(result.from, result.to)
@@ -168,23 +168,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- FINAL UPDATED: 100ms SLOW SLIDE + STOP SFX ---
     private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
         lifecycleScope.launch {
-
-            // 1. Play Sound and KEEP the ID
             val streamId = soundManager.playSlideBack()
-
-            // 2. Settings: 100ms delay (Very deliberate slow slide)
             val stepSize = 2
             val frameDelay = 100L
 
             var currentPos = startPos
 
-            // 3. Loop
             while (currentPos > 1) {
                 val oldPos = currentPos
-
                 currentPos -= stepSize
                 if (currentPos < 1) currentPos = 1
 
@@ -199,14 +192,10 @@ class MainActivity : AppCompatActivity() {
                 delay(frameDelay)
             }
 
-            // 4. STOP SOUND EXACTLY HERE
             soundManager.stop(streamId)
 
-            // 5. Final Sync
             player.currentPosition = 1
             adapter.notifyDataSetChanged()
-
-            // 6. Resume Game
             viewModel.finalizeKill(player.id)
         }
     }
@@ -302,8 +291,6 @@ class MainActivity : AppCompatActivity() {
             adapter.updatePlayers(players)
 
             isAnimatingMove = false
-
-            // ERROR WAS HERE: Replaced old method with new one
             viewModel.onPlayerMoveFinished(finalPos)
         }
     }
@@ -376,6 +363,11 @@ class MainActivity : AppCompatActivity() {
                 soundManager.playStarCollect()
                 triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
+            // NEW: Enhanced Entry Logic
+            is GameEngine.MoveResult.PacmanSpawned -> {
+                soundManager.playPacmanEntry()
+                triggerPopText("HUNTER AWAKENS!", 0xFFFF0000.toInt(), R.anim.pop_zoom_fade)
+            }
             is GameEngine.MoveResult.StarUsed -> {
                 soundManager.playStarUsed()
                 triggerPopImage(R.drawable.img_devil_smile)
@@ -437,7 +429,6 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop.startAnimation(anim)
     }
 
-    // ADD THIS NEW FUNCTION to MainActivity class:
     private fun animatePacmanMovement(from: Int, to: Int) {
         lifecycleScope.launch {
             val players = viewModel.players.value ?: return@launch
@@ -452,8 +443,8 @@ class MainActivity : AppCompatActivity() {
                 activePlayer.pacmanPosition = currentPacPos
                 adapter.updatePlayers(players)
 
-                // Use a sound if you have one, or reuse hop
-                soundManager.playHop()
+                // NEW: Use specific Pac-Man move sound
+                soundManager.playPacmanMove()
                 delay(100) // Fast speed
             }
 
