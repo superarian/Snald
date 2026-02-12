@@ -47,36 +47,56 @@ class GameEngine {
         return MoveResult.NormalMove(newPosition)
     }
 
-    // NEW: Logic for Pac-Man Movement
+    // =================================================================
+    // NEW: Centralized Circular Logic (Owner Approach)
+    // =================================================================
+
+    // Helper to generate the exact list of squares Pac-Man visits
+    fun calculatePacmanPath(startPos: Int, steps: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = startPos
+
+        for (i in 1..steps) {
+            current--
+            if (current < 1) {
+                current = 100 // Loop back to top
+            }
+            path.add(current)
+        }
+        return path
+    }
+
+    // Calculates the move and returns the full path for the UI
     fun calculatePacmanMove(player: Player, diceValue: Int): PacmanResult {
         if (player.pacmanPosition == 0) return PacmanResult.NoMove
 
-        // Reverse direction, double speed
+        // Speed is double the dice value
         val steps = diceValue * 2
-        var newPos = player.pacmanPosition - steps
+        val path = calculatePacmanPath(player.pacmanPosition, steps)
+        val finalPos = path.last()
 
-        if (newPos < 1) {
-            return PacmanResult.Despawn(player.pacmanPosition)
-        }
-        return PacmanResult.Move(from = player.pacmanPosition, to = newPos)
+        return PacmanResult.Move(path, finalPos)
     }
 
-    // NEW: Check if Pac-Man eats anyone
-    fun checkPacmanKills(hunter: Player, allPlayers: List<Player>): Player? {
+    // Checks if ANY player is on the path Pac-Man traveled
+    fun checkPacmanPathKills(hunter: Player, allPlayers: List<Player>, path: List<Int>): Player? {
         if (hunter.pacmanPosition == 0) return null
 
-        for (enemy in allPlayers) {
-            // Can't eat self, finished players, or players at start/end
-            if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
-                if (enemy.currentPosition == hunter.pacmanPosition) {
-                    return enemy
+        // Check every step in the path for an enemy
+        for (step in path) {
+            for (enemy in allPlayers) {
+                // Can't eat self, finished players, or players at start/end
+                if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
+                    if (enemy.currentPosition == step) {
+                        return enemy // Found a victim on the path!
+                    }
                 }
             }
         }
         return null
     }
 
-    // Standard Collision (Player vs Player)
+    // Standard Collision (Player vs Player) - Same as before
     fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
         if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
 
@@ -93,7 +113,7 @@ class GameEngine {
         data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
         data class LadderClimb(val bottom: Int, val top: Int) : MoveResult()
         data class StarCollected(val at: Int) : MoveResult()
-        data class PacmanSpawned(val at: Int) : MoveResult() // NEW
+        data class PacmanSpawned(val at: Int) : MoveResult()
         data class StarUsed(val at: Int, val msg: String) : MoveResult()
         data class Stay(val at: Int, val reason: String) : MoveResult()
         data class Win(val at: Int) : MoveResult()
@@ -101,7 +121,7 @@ class GameEngine {
 
     sealed class PacmanResult {
         object NoMove : PacmanResult()
-        data class Move(val from: Int, val to: Int) : PacmanResult()
-        data class Despawn(val from: Int) : PacmanResult()
+        // Changed: Now carries the path list for animation
+        data class Move(val path: List<Int>, val finalPos: Int) : PacmanResult()
     }
 }

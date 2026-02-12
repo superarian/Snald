@@ -136,10 +136,13 @@ class MainActivity : AppCompatActivity() {
 
                 Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
 
+                // CHANGED: Play Sound IMMEDIATELY with the video
+                val streamId = soundManager.playSlideBack()
+
                 // Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    // Video Done -> Start Slide
-                    animateDeathSlideSmooth(killedPlayer, fatalPos)
+                    // Video Done -> Start Slide (pass streamId to stop it later)
+                    animateDeathSlideSmooth(killedPlayer, fatalPos, streamId)
                 }
             }
         }
@@ -158,19 +161,17 @@ class MainActivity : AppCompatActivity() {
         // Observer for Pac-Man Movement
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
-                animatePacmanMovement(result.from, result.to)
-            } else if (result is GameEngine.PacmanResult.Despawn) {
-                Toast.makeText(this, "Pac-Man vanished!", Toast.LENGTH_SHORT).show()
-                viewModel.onPacmanMoveFinished(0)
+                // Pass the PATH to the animator
+                animatePacmanMovement(result.path, result.finalPos)
             } else {
                 viewModel.onPacmanMoveFinished(0)
             }
         }
     }
 
-    private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
+    private fun animateDeathSlideSmooth(player: Player, startPos: Int, soundStreamId: Int) {
         lifecycleScope.launch {
-            val streamId = soundManager.playSlideBack()
+            // Sound is already playing (started with video)
             val stepSize = 2
             val frameDelay = 100L
 
@@ -192,7 +193,7 @@ class MainActivity : AppCompatActivity() {
                 delay(frameDelay)
             }
 
-            soundManager.stop(streamId)
+            soundManager.stop(soundStreamId)
 
             player.currentPosition = 1
             adapter.notifyDataSetChanged()
@@ -266,7 +267,8 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite ||
+                    moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
 
@@ -363,7 +365,6 @@ class MainActivity : AppCompatActivity() {
                 soundManager.playStarCollect()
                 triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
-            // NEW: Enhanced Entry Logic
             is GameEngine.MoveResult.PacmanSpawned -> {
                 soundManager.playPacmanEntry()
                 triggerPopText("HUNTER AWAKENS!", 0xFFFF0000.toInt(), R.anim.pop_zoom_fade)
@@ -429,27 +430,24 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop.startAnimation(anim)
     }
 
-    private fun animatePacmanMovement(from: Int, to: Int) {
+    private fun animatePacmanMovement(path: List<Int>, finalPos: Int) {
         lifecycleScope.launch {
             val players = viewModel.players.value ?: return@launch
             val activeId = viewModel.activePlayerId.value ?: return@launch
             val activePlayer = players.find { it.id == activeId } ?: return@launch
 
-            var currentPacPos = from
-
-            // Visual loop
-            while (currentPacPos > to) {
-                currentPacPos--
-                activePlayer.pacmanPosition = currentPacPos
+            // Loop through the EXACT path calculated by GameEngine
+            for (stepPos in path) {
+                activePlayer.pacmanPosition = stepPos
                 adapter.updatePlayers(players)
 
-                // NEW: Use specific Pac-Man move sound
+                // Play sound
                 soundManager.playPacmanMove()
-                delay(100) // Fast speed
+                delay(100)
             }
 
             delay(200)
-            viewModel.onPacmanMoveFinished(to)
+            viewModel.onPacmanMoveFinished(finalPos)
         }
     }
 }
