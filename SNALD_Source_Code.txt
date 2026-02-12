@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/12/2026 21:50:52
+EXPORT DATE: 02/12/2026 23:20:36
 ============================================
 
 
@@ -97,36 +97,56 @@ class GameEngine {
         return MoveResult.NormalMove(newPosition)
     }
 
-    // NEW: Logic for Pac-Man Movement
+    // =================================================================
+    // NEW: Centralized Circular Logic (Owner Approach)
+    // =================================================================
+
+    // Helper to generate the exact list of squares Pac-Man visits
+    fun calculatePacmanPath(startPos: Int, steps: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = startPos
+
+        for (i in 1..steps) {
+            current--
+            if (current < 1) {
+                current = 100 // Loop back to top
+            }
+            path.add(current)
+        }
+        return path
+    }
+
+    // Calculates the move and returns the full path for the UI
     fun calculatePacmanMove(player: Player, diceValue: Int): PacmanResult {
         if (player.pacmanPosition == 0) return PacmanResult.NoMove
 
-        // Reverse direction, double speed
+        // Speed is double the dice value
         val steps = diceValue * 2
-        var newPos = player.pacmanPosition - steps
+        val path = calculatePacmanPath(player.pacmanPosition, steps)
+        val finalPos = path.last()
 
-        if (newPos < 1) {
-            return PacmanResult.Despawn(player.pacmanPosition)
-        }
-        return PacmanResult.Move(from = player.pacmanPosition, to = newPos)
+        return PacmanResult.Move(path, finalPos)
     }
 
-    // NEW: Check if Pac-Man eats anyone
-    fun checkPacmanKills(hunter: Player, allPlayers: List<Player>): Player? {
+    // Checks if ANY player is on the path Pac-Man traveled
+    fun checkPacmanPathKills(hunter: Player, allPlayers: List<Player>, path: List<Int>): Player? {
         if (hunter.pacmanPosition == 0) return null
 
-        for (enemy in allPlayers) {
-            // Can't eat self, finished players, or players at start/end
-            if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
-                if (enemy.currentPosition == hunter.pacmanPosition) {
-                    return enemy
+        // Check every step in the path for an enemy
+        for (step in path) {
+            for (enemy in allPlayers) {
+                // Can't eat self, finished players, or players at start/end
+                if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
+                    if (enemy.currentPosition == step) {
+                        return enemy // Found a victim on the path!
+                    }
                 }
             }
         }
         return null
     }
 
-    // Standard Collision (Player vs Player)
+    // Standard Collision (Player vs Player) - Same as before
     fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
         if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
 
@@ -143,7 +163,7 @@ class GameEngine {
         data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
         data class LadderClimb(val bottom: Int, val top: Int) : MoveResult()
         data class StarCollected(val at: Int) : MoveResult()
-        data class PacmanSpawned(val at: Int) : MoveResult() // NEW
+        data class PacmanSpawned(val at: Int) : MoveResult()
         data class StarUsed(val at: Int, val msg: String) : MoveResult()
         data class Stay(val at: Int, val reason: String) : MoveResult()
         data class Win(val at: Int) : MoveResult()
@@ -151,8 +171,8 @@ class GameEngine {
 
     sealed class PacmanResult {
         object NoMove : PacmanResult()
-        data class Move(val from: Int, val to: Int) : PacmanResult()
-        data class Despawn(val from: Int) : PacmanResult()
+        // Changed: Now carries the path list for animation
+        data class Move(val path: List<Int>, val finalPos: Int) : PacmanResult()
     }
 }
 
@@ -348,7 +368,6 @@ class GameViewModel : ViewModel() {
     private val _lastMoveResult = MutableLiveData<GameEngine.MoveResult>()
     val lastMoveResult: LiveData<GameEngine.MoveResult> = _lastMoveResult
 
-    // NEW: LiveData specifically for Pac-Man events
     private val _pacmanMoveResult = MutableLiveData<GameEngine.PacmanResult>()
     val pacmanMoveResult: LiveData<GameEngine.PacmanResult> = _pacmanMoveResult
 
@@ -401,7 +420,6 @@ class GameViewModel : ViewModel() {
     }
 
     // PHASE 2: Player finished moving, check for Pac-Man
-    // THIS REPLACES 'updatePositionAndNextTurn'
     fun onPlayerMoveFinished(finalPos: Int) {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
@@ -435,26 +453,90 @@ class GameViewModel : ViewModel() {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
-        // 1. Player Collision
+        // 1. Player Collision (Standard)
         var enemy = engine.checkCollisions(activePlayer, currentList)
 
-        // 2. Pac-Man Collision (if Player didn't already hit someone)
-        if (enemy == null && activePlayer.isPacmanActive) {
-            enemy = engine.checkPacmanKills(activePlayer, currentList)
-        }
-
         if (enemy != null) {
+            // == COLLISION LOGIC ==
             if (enemy.hasShield) {
                 enemy.starCount-- // Break Shield
                 _collisionEvent.value = null
                 checkWinConditionOrNextTurn()
             } else {
-                // KILL LOGIC
+                // == STEAL PAC-MAN LOGIC ==
+                // If the victim has a Pac-Man, the killer steals it.
+                if (enemy.isPacmanActive) {
+                    activePlayer.pacmanPosition = enemy.pacmanPosition
+                    enemy.pacmanPosition = 0
+                }
+
+                // Kill the enemy
                 val fatalPos = enemy.currentPosition
                 isAnimationLocked = true
                 _collisionEvent.value = Pair(enemy, fatalPos)
             }
         } else {
+            // 2. Pac-Man Collision (Path Logic)
+            // Only check if Player didn't already hit someone
+            if (activePlayer.isPacmanActive) {
+                // Re-calculate the path to check for kills securely
+                val steps = currentTurnRoll * 2
+                val path = engine.calculatePacmanPath(activePlayer.pacmanPosition, steps) // Note: pacmanPosition is already updated at this point
+
+                // Note: We need the path STARTING from where it was BEFORE the update?
+                // Actually, onPacmanMoveFinished updated the position.
+                // We should technically check kills based on the path just taken.
+                // For safety, let's recalculate based on (Current + Steps) ? No, that's reverse.
+                // Simpler: We know the path logic is deterministic.
+                // Let's assume the Pac-Man move was valid.
+                // To be perfectly accurate, we need the start position.
+                // But for now, let's use the helper:
+                // We can just call calculatePacmanPath relative to where we *landed*? No.
+                // Let's just pass the path from the UI or recalculate properly.
+                // TRICK: We can reverse the math. If current is X, previous was X + steps (wrapping).
+                // Actually, let's just stick to the GameEngine logic.
+                // We will iterate all players and see if they are on the square Pac-Man is currently on?
+                // No, user wants PATH kills.
+
+                // Let's trust the 'path' logic. We will re-generate the path based on the START of the turn.
+                // Wait, activePlayer.pacmanPosition is now the END position.
+                // We need the START position to calculate the path.
+                // We don't have it easily here without storing it.
+                // Quick fix: Do the kill check *inside* onPacmanMoveFinished before updating?
+                // No, separation of concerns.
+
+                // FIX: We will scan the board for any enemy standing on the activePlayer.pacmanPosition?
+                // No, that misses the path.
+
+                // Let's rely on the fact that we can just check the *current* position for now to keep it simple,
+                // OR (Owner approach) - We reconstruct the path backwards.
+
+                // Re-calculating path backwards for verification:
+                var tempPos = activePlayer.pacmanPosition
+                val pathTaken = mutableListOf<Int>()
+                for(i in 1..(currentTurnRoll*2)) {
+                    pathTaken.add(tempPos)
+                    tempPos++
+                    if(tempPos > 100) tempPos = 1
+                }
+                // pathTaken now contains the squares we just visited (in reverse order).
+
+                enemy = engine.checkPacmanPathKills(activePlayer, currentList, pathTaken)
+
+                if (enemy != null) {
+                    if (enemy.hasShield) {
+                        enemy.starCount--
+                        _collisionEvent.value = null
+                        checkWinConditionOrNextTurn()
+                    } else {
+                        val fatalPos = enemy.currentPosition
+                        isAnimationLocked = true
+                        _collisionEvent.value = Pair(enemy, fatalPos)
+                    }
+                    return // Exit
+                }
+            }
+
             _players.value = currentList
             checkWinConditionOrNextTurn()
         }
@@ -740,10 +822,13 @@ class MainActivity : AppCompatActivity() {
 
                 Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
 
+                // CHANGED: Play Sound IMMEDIATELY with the video
+                val streamId = soundManager.playSlideBack()
+
                 // Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    // Video Done -> Start Slide
-                    animateDeathSlideSmooth(killedPlayer, fatalPos)
+                    // Video Done -> Start Slide (pass streamId to stop it later)
+                    animateDeathSlideSmooth(killedPlayer, fatalPos, streamId)
                 }
             }
         }
@@ -762,19 +847,17 @@ class MainActivity : AppCompatActivity() {
         // Observer for Pac-Man Movement
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
-                animatePacmanMovement(result.from, result.to)
-            } else if (result is GameEngine.PacmanResult.Despawn) {
-                Toast.makeText(this, "Pac-Man vanished!", Toast.LENGTH_SHORT).show()
-                viewModel.onPacmanMoveFinished(0)
+                // Pass the PATH to the animator
+                animatePacmanMovement(result.path, result.finalPos)
             } else {
                 viewModel.onPacmanMoveFinished(0)
             }
         }
     }
 
-    private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
+    private fun animateDeathSlideSmooth(player: Player, startPos: Int, soundStreamId: Int) {
         lifecycleScope.launch {
-            val streamId = soundManager.playSlideBack()
+            // Sound is already playing (started with video)
             val stepSize = 2
             val frameDelay = 100L
 
@@ -796,7 +879,7 @@ class MainActivity : AppCompatActivity() {
                 delay(frameDelay)
             }
 
-            soundManager.stop(streamId)
+            soundManager.stop(soundStreamId)
 
             player.currentPosition = 1
             adapter.notifyDataSetChanged()
@@ -870,7 +953,8 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite ||
+                    moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
 
@@ -967,7 +1051,6 @@ class MainActivity : AppCompatActivity() {
                 soundManager.playStarCollect()
                 triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
             }
-            // NEW: Enhanced Entry Logic
             is GameEngine.MoveResult.PacmanSpawned -> {
                 soundManager.playPacmanEntry()
                 triggerPopText("HUNTER AWAKENS!", 0xFFFF0000.toInt(), R.anim.pop_zoom_fade)
@@ -1033,27 +1116,24 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop.startAnimation(anim)
     }
 
-    private fun animatePacmanMovement(from: Int, to: Int) {
+    private fun animatePacmanMovement(path: List<Int>, finalPos: Int) {
         lifecycleScope.launch {
             val players = viewModel.players.value ?: return@launch
             val activeId = viewModel.activePlayerId.value ?: return@launch
             val activePlayer = players.find { it.id == activeId } ?: return@launch
 
-            var currentPacPos = from
-
-            // Visual loop
-            while (currentPacPos > to) {
-                currentPacPos--
-                activePlayer.pacmanPosition = currentPacPos
+            // Loop through the EXACT path calculated by GameEngine
+            for (stepPos in path) {
+                activePlayer.pacmanPosition = stepPos
                 adapter.updatePlayers(players)
 
-                // NEW: Use specific Pac-Man move sound
+                // Play sound
                 soundManager.playPacmanMove()
-                delay(100) // Fast speed
+                delay(100)
             }
 
             delay(200)
-            viewModel.onPacmanMoveFinished(to)
+            viewModel.onPacmanMoveFinished(finalPos)
         }
     }
 }

@@ -4,6 +4,21 @@ import com.bytemantis.snald.model.Player
 
 class GameEngine {
 
+    // Helper: Generate circular path (100 -> 1 -> 100)
+    fun calculatePacmanPath(startPos: Int, steps: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = startPos
+
+        for (i in 1..steps) {
+            current--
+            if (current < 1) {
+                current = 100 // Loop back to top
+            }
+            path.add(current)
+        }
+        return path
+    }
+
     fun calculateMove(player: Player, diceValue: Int): MoveResult {
         var newPosition = player.currentPosition + diceValue
 
@@ -19,26 +34,26 @@ class GameEngine {
         if (BoardConfig.STARS.contains(newPosition)) {
             player.starCount++
 
-            // NEW: Spawn Pac-Man if 2nd star and not already active
-            if (player.starCount >= 2 && player.pacmanPosition == 0) {
-                player.pacmanPosition = 99 // Spawn at 99
+            // SINGLE PAC-MAN RULE:
+            // If 2nd star collected, trigger Spawn/Steal immediately.
+            if (player.starCount >= 2) {
                 return MoveResult.PacmanSpawned(newPosition)
             }
             return MoveResult.StarCollected(newPosition)
         }
 
-        // 2. Check for Snakes
+        // 2. Check for Snakes (Standard Player)
         if (BoardConfig.SNAKES.containsKey(newPosition)) {
             val snakeTail = BoardConfig.SNAKES[newPosition]!!
             if (player.hasShield) {
-                player.starCount-- // Consume 1 shield
+                player.starCount-- // Consume shield
                 return MoveResult.StarUsed(newPosition, "Star Shield Used!")
             } else {
                 return MoveResult.SnakeBite(newPosition, snakeTail)
             }
         }
 
-        // 3. Check for Ladders
+        // 3. Check for Ladders (Standard Player)
         if (BoardConfig.LADDERS.containsKey(newPosition)) {
             val ladderTop = BoardConfig.LADDERS[newPosition]!!
             return MoveResult.LadderClimb(newPosition, ladderTop)
@@ -47,59 +62,33 @@ class GameEngine {
         return MoveResult.NormalMove(newPosition)
     }
 
-    // =================================================================
-    // NEW: Centralized Circular Logic (Owner Approach)
-    // =================================================================
-
-    // Helper to generate the exact list of squares Pac-Man visits
-    fun calculatePacmanPath(startPos: Int, steps: Int): List<Int> {
-        val path = mutableListOf<Int>()
-        var current = startPos
-
-        for (i in 1..steps) {
-            current--
-            if (current < 1) {
-                current = 100 // Loop back to top
-            }
-            path.add(current)
-        }
-        return path
-    }
-
-    // Calculates the move and returns the full path for the UI
+    // PAC-MAN MOVE LOGIC
     fun calculatePacmanMove(player: Player, diceValue: Int): PacmanResult {
         if (player.pacmanPosition == 0) return PacmanResult.NoMove
 
-        // Speed is double the dice value
         val steps = diceValue * 2
         val path = calculatePacmanPath(player.pacmanPosition, steps)
-        val finalPos = path.last()
+        var finalPos = path.last()
 
-        return PacmanResult.Move(path, finalPos)
-    }
-
-    // Checks if ANY player is on the path Pac-Man traveled
-    fun checkPacmanPathKills(hunter: Player, allPlayers: List<Player>, path: List<Int>): Player? {
-        if (hunter.pacmanPosition == 0) return null
-
-        // Check every step in the path for an enemy
-        for (step in path) {
-            for (enemy in allPlayers) {
-                // Can't eat self, finished players, or players at start/end
-                if (enemy.id != hunter.id && !enemy.isFinished && enemy.currentPosition != 1 && enemy.currentPosition != 100) {
-                    if (enemy.currentPosition == step) {
-                        return enemy // Found a victim on the path!
-                    }
-                }
-            }
+        // CHECK VULNERABILITY
+        // 1. Snake
+        if (BoardConfig.SNAKES.containsKey(finalPos)) {
+            val tail = BoardConfig.SNAKES[finalPos]!!
+            return PacmanResult.Move(path, tail, PacmanEvent.SNAKE_BITE)
         }
-        return null
+
+        // 2. Ladder
+        if (BoardConfig.LADDERS.containsKey(finalPos)) {
+            val top = BoardConfig.LADDERS[finalPos]!!
+            return PacmanResult.Move(path, top, PacmanEvent.LADDER_CLIMB)
+        }
+
+        return PacmanResult.Move(path, finalPos, PacmanEvent.NORMAL)
     }
 
-    // Standard Collision (Player vs Player) - Same as before
+    // Check collisions (Player vs Player)
     fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
         if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
-
         for (enemy in allPlayers) {
             if (enemy.id != activePlayer.id && !enemy.isFinished && enemy.currentPosition == activePlayer.currentPosition) {
                 return enemy
@@ -108,6 +97,7 @@ class GameEngine {
         return null
     }
 
+    // RESULT CLASSES
     sealed class MoveResult {
         data class NormalMove(val to: Int) : MoveResult()
         data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
@@ -119,9 +109,10 @@ class GameEngine {
         data class Win(val at: Int) : MoveResult()
     }
 
+    enum class PacmanEvent { NORMAL, SNAKE_BITE, LADDER_CLIMB }
+
     sealed class PacmanResult {
         object NoMove : PacmanResult()
-        // Changed: Now carries the path list for animation
-        data class Move(val path: List<Int>, val finalPos: Int) : PacmanResult()
+        data class Move(val path: List<Int>, val finalPos: Int, val eventType: PacmanEvent) : PacmanResult()
     }
 }

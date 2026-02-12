@@ -24,7 +24,6 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load all standard sounds
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -34,12 +33,13 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
         soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
 
-        // NEW: Load Pac-Man Sounds
         soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
         soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
+
+        // NEW: Fast Flash SFX
+        soundMap.put(R.raw.sfx_fast_flash, soundPool.load(context, R.raw.sfx_fast_flash, 1))
     }
 
-    // Playback functions
     fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
     fun playHop(): Int = play(R.raw.sfx_hop)
     fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
@@ -47,34 +47,25 @@ class SoundManager(context: Context) {
     fun playStarUsed(): Int = play(R.raw.sfx_star_use)
     fun playWin(): Int = play(R.raw.sfx_win)
     fun playSlideBack(): Int = play(R.raw.sfx_slide_back)
-
-    // NEW: Pac-Man Playback
     fun playPacmanEntry(): Int = play(R.raw.sfx_pacman_entry)
     fun playPacmanMove(): Int = play(R.raw.sfx_pacman_move)
+    fun playFastFlash(): Int = play(R.raw.sfx_fast_flash)
 
-    // Stop a specific sound stream
     fun stop(streamId: Int) {
-        if (streamId != 0) {
-            soundPool.stop(streamId)
-        }
+        if (streamId != 0) soundPool.stop(streamId)
     }
 
     fun playStarCollect() {
         val soundId = soundMap.get(R.raw.sfx_star_collect)
         if (soundId == 0) return
-
         val streamId = soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
-
-        // Fade out effect
         val fadeAnim = ValueAnimator.ofFloat(1.0f, 0.0f)
         fadeAnim.duration = 1500L
         fadeAnim.interpolator = LinearInterpolator()
-
         fadeAnim.addUpdateListener { animation ->
             val volume = animation.animatedValue as Float
             soundPool.setVolume(streamId, volume, volume)
         }
-
         fadeAnim.startDelay = 500
         fadeAnim.start()
     }
@@ -82,8 +73,6 @@ class SoundManager(context: Context) {
     private fun play(resId: Int): Int {
         val soundId = soundMap.get(resId)
         if (soundId == 0) return 0
-
-        // Returns the stream ID (non-zero if successful)
         return soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
     }
 }

@@ -133,15 +133,10 @@ class MainActivity : AppCompatActivity() {
         viewModel.collisionEvent.observe(this) { event ->
             if (event != null) {
                 val (killedPlayer, fatalPos) = event
-
                 Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
-
-                // CHANGED: Play Sound IMMEDIATELY with the video
                 val streamId = soundManager.playSlideBack()
 
-                // Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    // Video Done -> Start Slide (pass streamId to stop it later)
                     animateDeathSlideSmooth(killedPlayer, fatalPos, streamId)
                 }
             }
@@ -158,87 +153,92 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Observer for Pac-Man Movement
+        // OBSERVE PAC-MAN
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
-                // Pass the PATH to the animator
-                animatePacmanMovement(result.path, result.finalPos)
+                animatePacmanMovement(result)
             } else {
                 viewModel.onPacmanMoveFinished(0)
             }
         }
     }
 
+    // --- ANIMATIONS ---
+
+    private fun animatePacmanMovement(result: GameEngine.PacmanResult.Move) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+
+            // 1. Walk Steps
+            for (stepPos in result.path) {
+                activePlayer.pacmanPosition = stepPos
+                adapter.updatePlayers(players)
+                soundManager.playPacmanMove()
+                delay(100)
+            }
+
+            // 2. Handle Vulnerability Events
+            if (result.eventType != GameEngine.PacmanEvent.NORMAL) {
+                delay(200)
+
+                when (result.eventType) {
+                    GameEngine.PacmanEvent.SNAKE_BITE -> {
+                        // SNAKE: Image Popup + Fast Flash SFX
+                        soundManager.playFastFlash()
+                        triggerPopImage(R.drawable.pacman_snake_bite)
+                        delay(1500)
+                    }
+                    GameEngine.PacmanEvent.LADDER_CLIMB -> {
+                        // LADDER: Video Popup (Color Specific) + No Extra SFX
+                        val videoRes = when(activePlayer.id) {
+                            1 -> R.raw.video_ladder_p1 // RED
+                            2 -> R.raw.video_ladder_p2 // BLUE
+                            3 -> R.raw.video_ladder_p3 // GREEN
+                            4 -> R.raw.video_ladder_p4 // YELLOW
+                            else -> R.raw.video_ladder_p1
+                        }
+
+                        // We need a suspendCoroutine or simple delay if video logic is complex.
+                        // Here we trigger video and wait inside callback logic or just wait for standard time?
+                        // Better to pause execution until video done.
+                        suspendCancellableCoroutine<Unit> { cont ->
+                            triggerPopVideo(videoRes) {
+                                cont.resume(Unit)
+                            }
+                        }
+                    }
+                    else -> {}
+                }
+            }
+
+            // 3. Finish
+            delay(200)
+            viewModel.onPacmanMoveFinished(result.finalPos)
+        }
+    }
+
     private fun animateDeathSlideSmooth(player: Player, startPos: Int, soundStreamId: Int) {
         lifecycleScope.launch {
-            // Sound is already playing (started with video)
             val stepSize = 2
-            val frameDelay = 100L
-
             var currentPos = startPos
-
             while (currentPos > 1) {
                 val oldPos = currentPos
                 currentPos -= stepSize
                 if (currentPos < 1) currentPos = 1
-
                 player.currentPosition = currentPos
-
                 val oldIndex = getAdapterPositionForSquare(oldPos)
                 val newIndex = getAdapterPositionForSquare(currentPos)
-
                 adapter.notifyItemChanged(oldIndex)
                 adapter.notifyItemChanged(newIndex)
-
-                delay(frameDelay)
+                delay(100)
             }
-
             soundManager.stop(soundStreamId)
-
             player.currentPosition = 1
             adapter.notifyDataSetChanged()
             viewModel.finalizeKill(player.id)
         }
-    }
-
-    private fun updateStatusText(playerId: Int) {
-        statusText.text = "Player $playerId's Turn"
-        val color = when(playerId) {
-            1 -> 0xFFFF0000.toInt()
-            2 -> 0xFF0000FF.toInt()
-            3 -> 0xFF00FF00.toInt()
-            4 -> 0xFFFFFF00.toInt()
-            else -> 0xFFFFFFFF.toInt()
-        }
-        statusText.setTextColor(color)
-    }
-
-    private fun highlightActiveDice(activeId: Int) {
-        diceViews.forEach { (id, view) ->
-            if (id == activeId) {
-                view.alpha = 1.0f
-                view.animate().scaleX(1.2f).scaleY(1.2f).setDuration(300).start()
-            } else {
-                view.alpha = 0.5f
-                view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(300).start()
-            }
-        }
-    }
-
-    private fun resetDiceOpacity() {
-        diceViews.values.forEach { it.alpha = 0.5f }
-    }
-
-    private fun updateDiceImage(view: ImageView, dice: Int) {
-        val resId = when (dice) {
-            1 -> R.drawable.dice_1
-            2 -> R.drawable.dice_2
-            3 -> R.drawable.dice_3
-            4 -> R.drawable.dice_4
-            5 -> R.drawable.dice_5
-            else -> R.drawable.dice_6
-        }
-        view.setImageResource(resId)
     }
 
     private fun animateHoppingMovement(stepsToMove: Int) {
@@ -267,44 +267,70 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite ||
-                    moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
-
                     delay(1000)
-
                     if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
                     if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
-
                     animateSlide(currentVisualPosition, finalPos, activePlayer.color)
                 } else {
                     handleMoveResult(moveResult)
-
-                    if (moveResult is GameEngine.MoveResult.StarUsed) {
-                        delay(3600)
-                    } else {
-                        delay(500)
-                    }
+                    if (moveResult is GameEngine.MoveResult.StarUsed) delay(3600) else delay(500)
                 }
             }
 
             activePlayer.currentPosition = finalPos
             adapter.updatePlayers(players)
-
             isAnimatingMove = false
             viewModel.onPlayerMoveFinished(finalPos)
         }
     }
 
+    // --- UTILS ---
+
+    private fun updateStatusText(playerId: Int) {
+        statusText.text = "Player $playerId's Turn"
+        val color = when(playerId) {
+            1 -> 0xFFFF0000.toInt()
+            2 -> 0xFF0000FF.toInt()
+            3 -> 0xFF00FF00.toInt()
+            4 -> 0xFFFFFF00.toInt()
+            else -> 0xFFFFFFFF.toInt()
+        }
+        statusText.setTextColor(color)
+    }
+
+    private fun highlightActiveDice(activeId: Int) {
+        diceViews.forEach { (id, view) ->
+            if (id == activeId) {
+                view.alpha = 1.0f
+                view.animate().scaleX(1.2f).scaleY(1.2f).setDuration(300).start()
+            } else {
+                view.alpha = 0.5f
+                view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(300).start()
+            }
+        }
+    }
+
+    private fun resetDiceOpacity() { diceViews.values.forEach { it.alpha = 0.5f } }
+
+    private fun updateDiceImage(view: ImageView, dice: Int) {
+        val resId = when (dice) {
+            1 -> R.drawable.dice_1
+            2 -> R.drawable.dice_2
+            3 -> R.drawable.dice_3
+            4 -> R.drawable.dice_4
+            5 -> R.drawable.dice_5
+            else -> R.drawable.dice_6
+        }
+        view.setImageResource(resId)
+    }
+
     private fun getAdapterPositionForSquare(squareNumber: Int): Int {
         if (squareNumber < 1 || squareNumber > 100) return 0
         val bottomUpRow = (squareNumber - 1) / 10
-        val col = if (bottomUpRow % 2 == 0) {
-            (squareNumber - 1) % 10
-        } else {
-            9 - ((squareNumber - 1) % 10)
-        }
+        val col = if (bottomUpRow % 2 == 0) (squareNumber - 1) % 10 else 9 - ((squareNumber - 1) % 10)
         val row = 9 - bottomUpRow
         return (row * 10) + col
     }
@@ -319,32 +345,25 @@ class MainActivity : AppCompatActivity() {
             val startCoords = IntArray(2)
             val endCoords = IntArray(2)
             val parentCoords = IntArray(2)
-
             startView.getLocationInWindow(startCoords)
             endView.getLocationInWindow(endCoords)
             findViewById<View>(R.id.overlay_container).getLocationInWindow(parentCoords)
 
-            val startX = startCoords[0] - parentCoords[0]
-            val startY = startCoords[1] - parentCoords[1]
-            val endX = endCoords[0] - parentCoords[0]
-            val endY = endCoords[1] - parentCoords[1]
-
             floatingToken.setColorFilter(color)
-            floatingToken.translationX = startX.toFloat()
-            floatingToken.translationY = startY.toFloat()
+            floatingToken.translationX = (startCoords[0] - parentCoords[0]).toFloat()
+            floatingToken.translationY = (startCoords[1] - parentCoords[1]).toFloat()
             floatingToken.visibility = View.VISIBLE
 
             floatingToken.animate()
-                .translationX(endX.toFloat())
-                .translationY(endY.toFloat())
+                .translationX((endCoords[0] - parentCoords[0]).toFloat())
+                .translationY((endCoords[1] - parentCoords[1]).toFloat())
                 .setDuration(1200)
                 .setListener(object : AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: Animator) {
                         floatingToken.visibility = View.GONE
                         continuation.resume(Unit)
                     }
-                })
-                .start()
+                }).start()
         } else {
             continuation.resume(Unit)
         }
@@ -387,12 +406,10 @@ class MainActivity : AppCompatActivity() {
             videoOverlayPop.setVideoURI(uri)
             videoOverlayPop.setZOrderOnTop(true)
             videoOverlayPop.visibility = View.VISIBLE
-
             videoOverlayPop.setOnCompletionListener {
                 videoOverlayPop.visibility = View.GONE
                 onComplete()
             }
-
             videoOverlayPop.start()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -428,26 +445,5 @@ class MainActivity : AppCompatActivity() {
             override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         imgOverlayPop.startAnimation(anim)
-    }
-
-    private fun animatePacmanMovement(path: List<Int>, finalPos: Int) {
-        lifecycleScope.launch {
-            val players = viewModel.players.value ?: return@launch
-            val activeId = viewModel.activePlayerId.value ?: return@launch
-            val activePlayer = players.find { it.id == activeId } ?: return@launch
-
-            // Loop through the EXACT path calculated by GameEngine
-            for (stepPos in path) {
-                activePlayer.pacmanPosition = stepPos
-                adapter.updatePlayers(players)
-
-                // Play sound
-                soundManager.playPacmanMove()
-                delay(100)
-            }
-
-            delay(200)
-            viewModel.onPacmanMoveFinished(finalPos)
-        }
     }
 }

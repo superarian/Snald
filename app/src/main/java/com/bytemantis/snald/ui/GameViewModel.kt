@@ -34,8 +34,6 @@ class GameViewModel : ViewModel() {
 
     private var turnIndex = 0
     var isAnimationLocked = false
-
-    // Stores the dice roll to use for Pac-Man's turn
     private var currentTurnRoll = 0
 
     fun startGame(playerCount: Int) {
@@ -52,10 +50,22 @@ class GameViewModel : ViewModel() {
         isAnimationLocked = false
     }
 
-    // PHASE 1: Start Turn
+    // --- CONTRACTOR LOGIC: The "Single Pac-Man" Enforcer ---
+    fun assignPacmanTo(newOwnerId: Int) {
+        val currentList = _players.value ?: return
+
+        // 1. Wipe Pac-Man from existence (Contractor Patch)
+        currentList.forEach { it.pacmanPosition = 0 }
+
+        // 2. Assign to new owner at HOME (100)
+        val owner = currentList.find { it.id == newOwnerId }
+        owner?.pacmanPosition = 100
+
+        _players.value = currentList
+    }
+
     fun rollDiceForActivePlayer() {
         if (isAnimationLocked) return
-
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
@@ -68,138 +78,87 @@ class GameViewModel : ViewModel() {
         _diceValue.value = currentTurnRoll
 
         val result = engine.calculateMove(activePlayer, currentTurnRoll)
+
+        // INTERCEPT: If 2 stars collected, FORCE Assignment (Steal/Spawn)
+        if (result is GameEngine.MoveResult.PacmanSpawned) {
+            assignPacmanTo(activePlayer.id)
+        }
+
         _lastMoveResult.value = result
     }
 
-    // PHASE 2: Player finished moving, check for Pac-Man
     fun onPlayerMoveFinished(finalPos: Int) {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
         activePlayer.currentPosition = finalPos
-        if (finalPos == 100) activePlayer.isFinished = true
 
-        // If player has an active Pac-Man, calculate its move next
+        if (finalPos == 100) {
+            activePlayer.isFinished = true
+
+            // WINNER INHERITANCE: If winner had Pac-Man, pass to lowest player
+            if (activePlayer.pacmanPosition > 0) {
+                activePlayer.pacmanPosition = 0
+                transferPacmanToLowest(currentList)
+            }
+        }
+
+        // Move Pac-Man if active
         if (activePlayer.isPacmanActive) {
             val pacResult = engine.calculatePacmanMove(activePlayer, currentTurnRoll)
             _pacmanMoveResult.value = pacResult
         } else {
-            // Skip Pac-Man phase
             finalizeTurn()
         }
     }
 
-    // PHASE 3: Pac-Man finished moving
+    private fun transferPacmanToLowest(allPlayers: List<Player>) {
+        // Find active player closest to start (lowest position)
+        val heir = allPlayers.filter { !it.isFinished }.minByOrNull { it.currentPosition }
+        if (heir != null) {
+            assignPacmanTo(heir.id) // Inherit at 100
+        }
+    }
+
     fun onPacmanMoveFinished(newPacPos: Int) {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
-
         activePlayer.pacmanPosition = newPacPos
-        _players.value = currentList // Sync UI
-
+        _players.value = currentList
         finalizeTurn()
     }
 
-    // PHASE 4: Collisions & End Turn
     private fun finalizeTurn() {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
-        // 1. Player Collision (Standard)
+        // 1. Player Collision
         var enemy = engine.checkCollisions(activePlayer, currentList)
 
         if (enemy != null) {
-            // == COLLISION LOGIC ==
             if (enemy.hasShield) {
-                enemy.starCount-- // Break Shield
+                enemy.starCount--
                 _collisionEvent.value = null
                 checkWinConditionOrNextTurn()
             } else {
-                // == STEAL PAC-MAN LOGIC ==
-                // If the victim has a Pac-Man, the killer steals it.
+                // KILLER STEAL: If victim had Pac-Man, Killer takes it at 100
                 if (enemy.isPacmanActive) {
-                    activePlayer.pacmanPosition = enemy.pacmanPosition
-                    enemy.pacmanPosition = 0
+                    assignPacmanTo(activePlayer.id)
                 }
 
-                // Kill the enemy
                 val fatalPos = enemy.currentPosition
                 isAnimationLocked = true
                 _collisionEvent.value = Pair(enemy, fatalPos)
             }
         } else {
-            // 2. Pac-Man Collision (Path Logic)
-            // Only check if Player didn't already hit someone
-            if (activePlayer.isPacmanActive) {
-                // Re-calculate the path to check for kills securely
-                val steps = currentTurnRoll * 2
-                val path = engine.calculatePacmanPath(activePlayer.pacmanPosition, steps) // Note: pacmanPosition is already updated at this point
-
-                // Note: We need the path STARTING from where it was BEFORE the update?
-                // Actually, onPacmanMoveFinished updated the position.
-                // We should technically check kills based on the path just taken.
-                // For safety, let's recalculate based on (Current + Steps) ? No, that's reverse.
-                // Simpler: We know the path logic is deterministic.
-                // Let's assume the Pac-Man move was valid.
-                // To be perfectly accurate, we need the start position.
-                // But for now, let's use the helper:
-                // We can just call calculatePacmanPath relative to where we *landed*? No.
-                // Let's just pass the path from the UI or recalculate properly.
-                // TRICK: We can reverse the math. If current is X, previous was X + steps (wrapping).
-                // Actually, let's just stick to the GameEngine logic.
-                // We will iterate all players and see if they are on the square Pac-Man is currently on?
-                // No, user wants PATH kills.
-
-                // Let's trust the 'path' logic. We will re-generate the path based on the START of the turn.
-                // Wait, activePlayer.pacmanPosition is now the END position.
-                // We need the START position to calculate the path.
-                // We don't have it easily here without storing it.
-                // Quick fix: Do the kill check *inside* onPacmanMoveFinished before updating?
-                // No, separation of concerns.
-
-                // FIX: We will scan the board for any enemy standing on the activePlayer.pacmanPosition?
-                // No, that misses the path.
-
-                // Let's rely on the fact that we can just check the *current* position for now to keep it simple,
-                // OR (Owner approach) - We reconstruct the path backwards.
-
-                // Re-calculating path backwards for verification:
-                var tempPos = activePlayer.pacmanPosition
-                val pathTaken = mutableListOf<Int>()
-                for(i in 1..(currentTurnRoll*2)) {
-                    pathTaken.add(tempPos)
-                    tempPos++
-                    if(tempPos > 100) tempPos = 1
-                }
-                // pathTaken now contains the squares we just visited (in reverse order).
-
-                enemy = engine.checkPacmanPathKills(activePlayer, currentList, pathTaken)
-
-                if (enemy != null) {
-                    if (enemy.hasShield) {
-                        enemy.starCount--
-                        _collisionEvent.value = null
-                        checkWinConditionOrNextTurn()
-                    } else {
-                        val fatalPos = enemy.currentPosition
-                        isAnimationLocked = true
-                        _collisionEvent.value = Pair(enemy, fatalPos)
-                    }
-                    return // Exit
-                }
-            }
-
-            _players.value = currentList
             checkWinConditionOrNextTurn()
         }
     }
 
     private fun checkWinConditionOrNextTurn() {
         if (_gameOver.value == true) return
-
         val currentList = _players.value ?: return
         val activePlayersCount = currentList.count { !it.isFinished }
-
         if (activePlayersCount <= 1) {
             _gameOver.value = true
         } else {
@@ -210,25 +169,20 @@ class GameViewModel : ViewModel() {
     fun finalizeKill(killedPlayerId: Int) {
         val currentList = _players.value ?: return
         val enemy = currentList.find { it.id == killedPlayerId } ?: return
-
         enemy.currentPosition = 1
         _players.value = currentList
-
         isAnimationLocked = false
         _collisionEvent.value = null
-
         checkWinConditionOrNextTurn()
     }
 
     private fun nextTurn() {
         val currentList = _players.value ?: return
         var nextIndex = (turnIndex + 1) % currentList.size
-
         while (currentList[nextIndex].isFinished) {
             nextIndex = (nextIndex + 1) % currentList.size
             if (currentList.all { it.isFinished }) break
         }
-
         turnIndex = nextIndex
         _activePlayerId.value = currentList[turnIndex].id
     }
