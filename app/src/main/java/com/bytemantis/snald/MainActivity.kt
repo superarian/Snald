@@ -154,6 +154,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // NEW: Observer for Pac-Man Movement
+        viewModel.pacmanMoveResult.observe(this) { result ->
+            if (result is GameEngine.PacmanResult.Move) {
+                animatePacmanMovement(result.from, result.to)
+            } else if (result is GameEngine.PacmanResult.Despawn) {
+                Toast.makeText(this, "Pac-Man vanished!", Toast.LENGTH_SHORT).show()
+                viewModel.onPacmanMoveFinished(0)
+            } else {
+                viewModel.onPacmanMoveFinished(0)
+            }
+        }
     }
 
     // --- FINAL UPDATED: 100ms SLOW SLIDE + STOP SFX ---
@@ -250,7 +262,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
                 delay(500)
                 isAnimatingMove = false
-                viewModel.updatePositionAndNextTurn(activePlayer.currentPosition)
+                viewModel.onPlayerMoveFinished(activePlayer.currentPosition)
                 return@launch
             }
 
@@ -290,7 +302,9 @@ class MainActivity : AppCompatActivity() {
             adapter.updatePlayers(players)
 
             isAnimatingMove = false
-            viewModel.updatePositionAndNextTurn(finalPos)
+
+            // ERROR WAS HERE: Replaced old method with new one
+            viewModel.onPlayerMoveFinished(finalPos)
         }
     }
 
@@ -421,5 +435,30 @@ class MainActivity : AppCompatActivity() {
             override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
         })
         imgOverlayPop.startAnimation(anim)
+    }
+
+    // ADD THIS NEW FUNCTION to MainActivity class:
+    private fun animatePacmanMovement(from: Int, to: Int) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+
+            var currentPacPos = from
+
+            // Visual loop
+            while (currentPacPos > to) {
+                currentPacPos--
+                activePlayer.pacmanPosition = currentPacPos
+                adapter.updatePlayers(players)
+
+                // Use a sound if you have one, or reuse hop
+                soundManager.playHop()
+                delay(100) // Fast speed
+            }
+
+            delay(200)
+            viewModel.onPacmanMoveFinished(to)
+        }
     }
 }

@@ -60,47 +60,63 @@ class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
         fun bind(number: Int, players: List<Player>) {
             textNumber.visibility = View.GONE
 
-            // 1. Find ALL players on this square (who haven't finished)
+            // RESET ALL VISIBILITY
+            tokenCenter.visibility = View.GONE
+            smallTokens.forEach { it.visibility = View.GONE; it.clearAnimation() }
+
+            // 1. Players on this square
             val playersHere = players.filter { it.currentPosition == number && !it.isFinished }
 
-            // Reset all visibilities first
-            tokenCenter.visibility = View.GONE
-            smallTokens.forEach {
-                it.visibility = View.GONE
-                it.clearAnimation()
-            }
+            // 2. Pac-Men on this square
+            val pacmenHere = players.filter { it.pacmanPosition == number }
 
-            if (playersHere.isEmpty()) {
-                return // Nothing to show
-            }
+            // LOGIC: If a Pac-Man is here, we must show it.
+            // If both Player and Pac-Man are here, we might need clustered view.
 
-            // 2. Decide Layout Mode
-            if (playersHere.size == 1) {
-                // --- SINGLE MODE ---
-                val p = playersHere[0]
+            val totalItems = playersHere + pacmenHere
+
+            if (totalItems.isEmpty()) return
+
+            if (totalItems.size == 1) {
+                // Single Item Mode
+                val item = totalItems[0]
                 tokenCenter.visibility = View.VISIBLE
-                tokenCenter.setColorFilter(p.color)
+                tokenCenter.setColorFilter(item.color)
 
-                // Star Pulse
-                if (p.hasStar) {
-                    val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                    tokenCenter.startAnimation(pulse)
+                // Distinguish Pac-Man from Player visually
+                if (pacmenHere.contains(item)) {
+                    // It's a Pac-Man! Rotate it or Scale it
+                    tokenCenter.rotation = 180f // Upside down logic?
+                    tokenCenter.scaleX = 0.7f   // Make it look meaner/smaller?
+                } else {
+                    // Normal Player
+                    tokenCenter.rotation = 0f
+                    tokenCenter.scaleX = 1.0f
+
+                    if (item.hasShield) {
+                        val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                        tokenCenter.startAnimation(pulse)
+                    }
                 }
             } else {
-                // --- MULTI/CLUSTER MODE ---
-                // Loop through players present and assign them to corner slots
-                for (i in playersHere.indices) {
+                // Multi Mode (Cluster)
+                for (i in totalItems.indices) {
                     if (i < smallTokens.size) {
                         val tokenView = smallTokens[i]
-                        val p = playersHere[i]
+                        val item = totalItems[i]
 
                         tokenView.visibility = View.VISIBLE
-                        tokenView.setColorFilter(p.color)
+                        tokenView.setColorFilter(item.color)
 
-                        // Star Pulse for specific small token
-                        if (p.hasStar) {
-                            val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
-                            tokenView.startAnimation(pulse)
+                        if (pacmenHere.contains(item)) {
+                            // Visual cue for Pac-Man in small view
+                            tokenView.rotation = 180f
+                        } else {
+                            tokenView.rotation = 0f
+                            if (item.hasShield) {
+                                val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                                tokenView.startAnimation(pulse)
+                            }
                         }
                     }
                 }

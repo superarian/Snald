@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/12/2026 01:50:23
+EXPORT DATE: 02/12/2026 14:52:06
 ============================================
 
 
@@ -269,11 +269,9 @@ class GameViewModel : ViewModel() {
 
     private val engine = GameEngine()
 
-    // List of all players
     private val _players = MutableLiveData<List<Player>>()
     val players: LiveData<List<Player>> = _players
 
-    // ID of the player whose turn it is
     private val _activePlayerId = MutableLiveData<Int>()
     val activePlayerId: LiveData<Int> = _activePlayerId
 
@@ -283,22 +281,19 @@ class GameViewModel : ViewModel() {
     private val _diceValue = MutableLiveData<Int>()
     val diceValue: LiveData<Int> = _diceValue
 
-    // Logic: Collided player needs to go back
-    private val _collisionEvent = MutableLiveData<Player?>() // Player who got killed
-    val collisionEvent: LiveData<Player?> = _collisionEvent
+    private val _collisionEvent = MutableLiveData<Pair<Player, Int>?>()
+    val collisionEvent: LiveData<Pair<Player, Int>?> = _collisionEvent
 
     private val _gameOver = MutableLiveData<Boolean>()
     val gameOver: LiveData<Boolean> = _gameOver
 
     private var totalPlayers = 2
     private var turnIndex = 0
+    var isAnimationLocked = false
 
     fun startGame(playerCount: Int) {
         totalPlayers = playerCount
         val newPlayers = ArrayList<Player>()
-
-        // Setup Players with Colors
-        // P1: Red, P2: Blue, P3: Green, P4: Yellow
         newPlayers.add(Player(1, "P1", Color.RED))
         if (playerCount >= 2) newPlayers.add(Player(2, "P2", Color.BLUE))
         if (playerCount >= 3) newPlayers.add(Player(3, "P3", Color.GREEN))
@@ -308,9 +303,12 @@ class GameViewModel : ViewModel() {
         turnIndex = 0
         _activePlayerId.value = newPlayers[0].id
         _gameOver.value = false
+        isAnimationLocked = false
     }
 
     fun rollDiceForActivePlayer() {
+        if (isAnimationLocked) return // Block input during animation
+
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
@@ -324,60 +322,59 @@ class GameViewModel : ViewModel() {
 
         val result = engine.calculateMove(activePlayer, rolledNumber)
         _lastMoveResult.value = result
-
-        // Logic will be handled in UI (Animation), then updatePosition is called
     }
 
     fun updatePositionAndNextTurn(finalPos: Int) {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
 
-        // 1. Update Position
         activePlayer.currentPosition = finalPos
 
-        // 2. Check Win
         if (finalPos == 100) {
             activePlayer.isFinished = true
-            // Check Game Over Condition (All finished except 1)
             val activePlayersCount = currentList.count { !it.isFinished }
             if (activePlayersCount <= 1) {
                 _gameOver.value = true
             }
         }
 
-        // 3. Check Collision (KILLING)
-        // If active player landed on enemy, and enemy has NO star
         val enemy = engine.checkCollisions(activePlayer, currentList)
         if (enemy != null) {
             if (enemy.hasStar) {
-                // Enemy survives, loses star
                 enemy.hasStar = false
-                _collisionEvent.value = null // No kill, just update state
-                // Safe to proceed to next turn immediately if no video plays
+                _collisionEvent.value = null
                 if (_gameOver.value != true) nextTurn()
             } else {
-                // KILL!
-                // Enemy goes to 1
-                enemy.currentPosition = 1
-                _collisionEvent.value = enemy
+                // KILL LOGIC
+                val fatalPos = enemy.currentPosition
+                isAnimationLocked = true
 
-                // STOP! Do NOT call nextTurn().
-                // We wait for MainActivity to play the video and call resumeGameAfterKill()
-                _players.value = currentList // Refresh UI to show enemy back at start
+                // CRITICAL: We do NOT reset enemy.currentPosition to 1 yet.
+                // We keep them at the fatal position so the UI shows them there
+                // while the video plays.
+
+                _collisionEvent.value = Pair(enemy, fatalPos)
                 return
             }
         } else {
-            // No collision, normal turn end
-            _players.value = currentList // Refresh UI
-
+            _players.value = currentList
             if (_gameOver.value != true) {
                 nextTurn()
             }
         }
     }
 
-    // NEW: Called by UI when the "Kill Video" finishes
-    fun resumeGameAfterKill() {
+    // Called by UI AFTER the slide animation is 100% done
+    fun finalizeKill(killedPlayerId: Int) {
+        val currentList = _players.value ?: return
+        val enemy = currentList.find { it.id == killedPlayerId } ?: return
+
+        enemy.currentPosition = 1 // Now strictly set to 1
+        _players.value = currentList // Update LiveData to sync everyone
+
+        isAnimationLocked = false
+        _collisionEvent.value = null
+
         if (_gameOver.value != true) {
             nextTurn()
         }
@@ -387,10 +384,8 @@ class GameViewModel : ViewModel() {
         val currentList = _players.value ?: return
         var nextIndex = (turnIndex + 1) % currentList.size
 
-        // Skip finished players
         while (currentList[nextIndex].isFinished) {
             nextIndex = (nextIndex + 1) % currentList.size
-            // Safety break if game is actually over
             if (currentList.all { it.isFinished }) break
         }
 
@@ -418,7 +413,7 @@ import com.bytemantis.snald.R
 class SoundManager(context: Context) {
 
     private val soundPool: SoundPool
-    // FIX: Using SparseIntArray (Better performance, fixes 'get' error)
+    // Correct initialization
     private val soundMap = SparseIntArray()
 
     init {
@@ -432,7 +427,7 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
-        // Load sounds using .put()
+        // Load all sounds
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -440,17 +435,28 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_star_collect, soundPool.load(context, R.raw.sfx_star_collect, 1))
         soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
+
+        // Ensure you have 'sfx_slide_back.mp3' in res/raw/
+        soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
     }
 
-    fun playDiceRoll() = play(R.raw.sfx_dice_roll)
-    fun playHop() = play(R.raw.sfx_hop)
-    fun playSnakeBite() = play(R.raw.sfx_snake_bite)
-    fun playLadderClimb() = play(R.raw.sfx_ladder_climb)
-    fun playStarUsed() = play(R.raw.sfx_star_use)
-    fun playWin() = play(R.raw.sfx_win)
+    // UPDATED: Now returns Int (Stream ID)
+    fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
+    fun playHop(): Int = play(R.raw.sfx_hop)
+    fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
+    fun playLadderClimb(): Int = play(R.raw.sfx_ladder_climb)
+    fun playStarUsed(): Int = play(R.raw.sfx_star_use)
+    fun playWin(): Int = play(R.raw.sfx_win)
+    fun playSlideBack(): Int = play(R.raw.sfx_slide_back)
+
+    // NEW: Stop a specific sound
+    fun stop(streamId: Int) {
+        if (streamId != 0) {
+            soundPool.stop(streamId)
+        }
+    }
 
     fun playStarCollect() {
-        // FIX: Use .get()
         val soundId = soundMap.get(R.raw.sfx_star_collect)
         if (soundId == 0) return
 
@@ -470,12 +476,13 @@ class SoundManager(context: Context) {
         fadeAnim.start()
     }
 
-    private fun play(resId: Int) {
-        // FIX: Use .get() and check for 0 (SparseIntArray default)
+    // UPDATED: Returns Stream ID
+    private fun play(resId: Int): Int {
         val soundId = soundMap.get(resId)
-        if (soundId == 0) return
+        if (soundId == 0) return 0
 
-        soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
+        // Returns the stream ID (non-zero if successful)
+        return soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
     }
 }
 
@@ -527,7 +534,7 @@ class MainActivity : AppCompatActivity() {
     // Overlays
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
-    private lateinit var videoOverlayPop: VideoView // NEW: Video Overlay
+    private lateinit var videoOverlayPop: VideoView
     private lateinit var floatingToken: ImageView
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
@@ -559,7 +566,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.text_main_status)
         textOverlayPop = findViewById(R.id.text_overlay_pop)
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
-        videoOverlayPop = findViewById(R.id.video_overlay_pop) // NEW
+        videoOverlayPop = findViewById(R.id.video_overlay_pop)
         floatingToken = findViewById(R.id.floating_token)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
@@ -574,7 +581,7 @@ class MainActivity : AppCompatActivity() {
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
-                if (!isAnimatingMove && viewModel.activePlayerId.value == id) {
+                if (!isAnimatingMove && !viewModel.isAnimationLocked && viewModel.activePlayerId.value == id) {
                     val player = viewModel.players.value?.find { it.id == id } ?: return@setOnClickListener
                     currentVisualPosition = player.currentPosition
                     isAnimatingMove = true
@@ -592,14 +599,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // 1. Observe Players
         viewModel.players.observe(this) { players ->
-            if (!isAnimatingMove) {
+            if (!isAnimatingMove && !viewModel.isAnimationLocked) {
                 adapter.updatePlayers(players)
             }
         }
 
-        // 2. Dice Roll
         viewModel.diceValue.observe(this) { dice ->
             val activeId = viewModel.activePlayerId.value ?: return@observe
             val activeDiceView = diceViews[activeId] ?: return@observe
@@ -614,25 +619,25 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
-        // 3. Turn Change
         viewModel.activePlayerId.observe(this) { id ->
             updateStatusText(id)
             highlightActiveDice(id)
         }
 
-        // 4. Collision (Kill) - UPDATED WITH WAIT LOGIC
-        viewModel.collisionEvent.observe(this) { killedPlayer ->
-            if (killedPlayer != null) {
-                Toast.makeText(this, "P${killedPlayer.id} KILLED! Back to Start!", Toast.LENGTH_SHORT).show()
+        viewModel.collisionEvent.observe(this) { event ->
+            if (event != null) {
+                val (killedPlayer, fatalPos) = event
 
-                // Play video, and Resume Game ONLY after video finishes
+                Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
+
+                // Play Video
                 triggerPopVideo(R.raw.hammer_kill) {
-                    viewModel.resumeGameAfterKill()
+                    // Video Done -> Start Slide
+                    animateDeathSlideSmooth(killedPlayer, fatalPos)
                 }
             }
         }
 
-        // 5. Game Over
         viewModel.gameOver.observe(this) { isOver ->
             if (isOver) {
                 soundManager.playWin()
@@ -645,13 +650,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // --- FINAL UPDATED: 100ms SLOW SLIDE + STOP SFX ---
+    private fun animateDeathSlideSmooth(player: Player, startPos: Int) {
+        lifecycleScope.launch {
+
+            // 1. Play Sound and KEEP the ID
+            val streamId = soundManager.playSlideBack()
+
+            // 2. Settings: 100ms delay (Very deliberate slow slide)
+            val stepSize = 2
+            val frameDelay = 100L
+
+            var currentPos = startPos
+
+            // 3. Loop
+            while (currentPos > 1) {
+                val oldPos = currentPos
+
+                currentPos -= stepSize
+                if (currentPos < 1) currentPos = 1
+
+                player.currentPosition = currentPos
+
+                val oldIndex = getAdapterPositionForSquare(oldPos)
+                val newIndex = getAdapterPositionForSquare(currentPos)
+
+                adapter.notifyItemChanged(oldIndex)
+                adapter.notifyItemChanged(newIndex)
+
+                delay(frameDelay)
+            }
+
+            // 4. STOP SOUND EXACTLY HERE
+            soundManager.stop(streamId)
+
+            // 5. Final Sync
+            player.currentPosition = 1
+            adapter.notifyDataSetChanged()
+
+            // 6. Resume Game
+            viewModel.finalizeKill(player.id)
+        }
+    }
+
     private fun updateStatusText(playerId: Int) {
         statusText.text = "Player $playerId's Turn"
         val color = when(playerId) {
-            1 -> 0xFFFF0000.toInt() // Red
-            2 -> 0xFF0000FF.toInt() // Blue
-            3 -> 0xFF00FF00.toInt() // Green
-            4 -> 0xFFFFFF00.toInt() // Yellow
+            1 -> 0xFFFF0000.toInt()
+            2 -> 0xFF0000FF.toInt()
+            3 -> 0xFF00FF00.toInt()
+            4 -> 0xFFFFFF00.toInt()
             else -> 0xFFFFFFFF.toInt()
         }
         statusText.setTextColor(color)
@@ -692,7 +740,6 @@ class MainActivity : AppCompatActivity() {
             val activePlayer = players.find { it.id == activeId } ?: return@launch
             val moveResult = viewModel.lastMoveResult.value
 
-            // 1. Check Overshot
             if (moveResult is GameEngine.MoveResult.Stay) {
                 Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
                 delay(500)
@@ -701,7 +748,6 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // 2. Hop Loop
             for (i in 1..stepsToMove) {
                 currentVisualPosition++
                 activePlayer.currentPosition = currentVisualPosition
@@ -710,28 +756,23 @@ class MainActivity : AppCompatActivity() {
                 delay(200)
             }
 
-            // 3. Logic & Animations
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                // If Snake/Ladder, delay, pop, then SLIDE
                 if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
-                    handleMoveResult(moveResult) // Pop Image
+                    handleMoveResult(moveResult)
 
-                    delay(1000) // Wait for pop
+                    delay(1000)
 
                     if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
                     if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
 
-                    // PERFORM THE SLIDE with CORRECT COORDINATES
                     animateSlide(currentVisualPosition, finalPos, activePlayer.color)
                 } else {
                     handleMoveResult(moveResult)
 
-                    // --- UPDATED TIMING LOGIC ---
                     if (moveResult is GameEngine.MoveResult.StarUsed) {
-                        // Wait for full Smiley Animation (3.6s) before ending turn
                         delay(3600)
                     } else {
                         delay(500)
@@ -739,7 +780,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 4. Final Sync
             activePlayer.currentPosition = finalPos
             adapter.updatePlayers(players)
 
@@ -748,33 +788,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- Coordinate Mapping (Maps Square# to Screen Index) ---
     private fun getAdapterPositionForSquare(squareNumber: Int): Int {
         if (squareNumber < 1 || squareNumber > 100) return 0
-
-        // 1. Find the bottom-up row (0-9)
         val bottomUpRow = (squareNumber - 1) / 10
-
-        // 2. Find the column (0-9) based on Zig-Zag
         val col = if (bottomUpRow % 2 == 0) {
-            // Even Row (0, 2): Left to Right
             (squareNumber - 1) % 10
         } else {
-            // Odd Row (1, 3): Right to Left
             9 - ((squareNumber - 1) % 10)
         }
-
-        // 3. Convert to Top-Down RecyclerView Row (0 is top)
         val row = 9 - bottomUpRow
-
-        // 4. Final Index
         return (row * 10) + col
     }
 
     private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
         val startIndex = getAdapterPositionForSquare(startSquare)
         val endIndex = getAdapterPositionForSquare(endSquare)
-
         val startView = recyclerBoard.layoutManager?.findViewByPosition(startIndex)
         val endView = recyclerBoard.layoutManager?.findViewByPosition(endIndex)
 
@@ -813,7 +841,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Handles standard game events (Snakes, Ladders, Stars)
     private fun handleMoveResult(result: GameEngine.MoveResult?) {
         if (result == null) return
         when (result) {
@@ -841,7 +868,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- UPDATED: VIDEO POPUP LOGIC WITH CALLBACK ---
     private fun triggerPopVideo(videoResId: Int, onComplete: () -> Unit) {
         try {
             val uri = Uri.parse("android.resource://$packageName/$videoResId")
@@ -851,14 +877,14 @@ class MainActivity : AppCompatActivity() {
 
             videoOverlayPop.setOnCompletionListener {
                 videoOverlayPop.visibility = View.GONE
-                onComplete() // Signal that video is done
+                onComplete()
             }
 
             videoOverlayPop.start()
         } catch (e: Exception) {
             e.printStackTrace()
             videoOverlayPop.visibility = View.GONE
-            onComplete() // Even if crash, ensure game resumes
+            onComplete()
         }
     }
 
