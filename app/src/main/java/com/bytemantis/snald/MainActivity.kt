@@ -8,10 +8,12 @@ import android.view.View
 import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
+import android.widget.LinearLayout
+import android.widget.FrameLayout
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -37,13 +39,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
-    // Overlays
+    // Overlays & Layouts
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
     private lateinit var videoOverlayPop: VideoView
     private lateinit var floatingToken: ImageView
+
+    // Screens
+    private lateinit var splashLayout: FrameLayout
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
+    private lateinit var pauseLayout: LinearLayout
 
     private var isAnimatingMove = false
     private var currentVisualPosition = 1
@@ -55,6 +61,22 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         setupObservers()
+        setupBackPressLogic()
+    }
+
+    private fun setupBackPressLogic() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Delegate logic to ViewModel
+                val state = viewModel.gameState.value
+                when (state) {
+                    GameViewModel.GameState.PLAYING -> viewModel.handleBackPress()
+                    GameViewModel.GameState.PAUSED -> viewModel.handleBackPress()
+                    GameViewModel.GameState.MENU -> finish() // Close app
+                    else -> {}
+                }
+            }
+        })
     }
 
     private fun setupUI() {
@@ -74,16 +96,22 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
         videoOverlayPop = findViewById(R.id.video_overlay_pop)
         floatingToken = findViewById(R.id.floating_token)
+
+        // Screen Layouts
+        splashLayout = findViewById(R.id.layout_splash)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
+        pauseLayout = findViewById(R.id.layout_pause)
 
-        findViewById<Button>(R.id.btn_2_players).setOnClickListener { startGame(2) }
-        findViewById<Button>(R.id.btn_3_players).setOnClickListener { startGame(3) }
-        findViewById<Button>(R.id.btn_4_players).setOnClickListener { startGame(4) }
-        findViewById<Button>(R.id.btn_restart).setOnClickListener {
-            gameOverLayout.visibility = View.GONE
-            setupLayout.visibility = View.VISIBLE
-        }
+        // Menu Buttons
+        findViewById<Button>(R.id.btn_2_players).setOnClickListener { viewModel.startGame(2) }
+        findViewById<Button>(R.id.btn_3_players).setOnClickListener { viewModel.startGame(3) }
+        findViewById<Button>(R.id.btn_4_players).setOnClickListener { viewModel.startGame(4) }
+
+        // Pause/Game Over Buttons
+        findViewById<Button>(R.id.btn_resume).setOnClickListener { viewModel.resumeGame() }
+        findViewById<Button>(R.id.btn_quit).setOnClickListener { viewModel.quitToMenu() }
+        findViewById<Button>(R.id.btn_restart).setOnClickListener { viewModel.quitToMenu() }
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
@@ -97,14 +125,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startGame(count: Int) {
-        setupLayout.visibility = View.GONE
-        findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
-        findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
-        viewModel.startGame(count)
-    }
-
     private fun setupObservers() {
+        // --- STATE OBSERVER ---
+        viewModel.gameState.observe(this) { state ->
+            updateScreenState(state)
+        }
+
         viewModel.players.observe(this) { players ->
             if (!isAnimatingMove && !viewModel.isAnimationLocked) {
                 adapter.updatePlayers(players)
@@ -146,14 +172,9 @@ class MainActivity : AppCompatActivity() {
             if (isOver) {
                 soundManager.playWin()
                 triggerPopText("GAME OVER", 0xFFFFFFFF.toInt(), R.anim.pop_zoom_fade)
-                lifecycleScope.launch {
-                    delay(2000)
-                    gameOverLayout.visibility = View.VISIBLE
-                }
             }
         }
 
-        // OBSERVE PAC-MAN
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
                 animatePacmanMovement(result)
@@ -163,7 +184,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- ANIMATIONS ---
+    private fun updateScreenState(state: GameViewModel.GameState) {
+        // Hide All first
+        splashLayout.visibility = View.GONE
+        setupLayout.visibility = View.GONE
+        gameOverLayout.visibility = View.GONE
+        pauseLayout.visibility = View.GONE
+
+        when (state) {
+            GameViewModel.GameState.SPLASH -> {
+                splashLayout.visibility = View.VISIBLE
+                soundManager.startMenuMusic()
+            }
+            GameViewModel.GameState.MENU -> {
+                setupLayout.visibility = View.VISIBLE
+                soundManager.startMenuMusic()
+                // Reset board visual if needed
+            }
+            GameViewModel.GameState.PLAYING -> {
+                soundManager.stopMenuMusic()
+                val count = viewModel.players.value?.size ?: 2
+                findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
+                findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
+            }
+            GameViewModel.GameState.PAUSED -> {
+                pauseLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic() // Or keep playing? Usually pause silence or distinct music
+            }
+            GameViewModel.GameState.GAME_OVER -> {
+                gameOverLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic()
+            }
+        }
+    }
+
+    // --- Lifecycle Audio Management ---
+    override fun onPause() {
+        super.onPause()
+        soundManager.pauseMusic()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (viewModel.gameState.value == GameViewModel.GameState.MENU ||
+            viewModel.gameState.value == GameViewModel.GameState.SPLASH) {
+            soundManager.resumeMusic()
+        }
+    }
+
+    // --- ANIMATIONS (Keep existing logic exactly as is) ---
 
     private fun animatePacmanMovement(result: GameEngine.PacmanResult.Move) {
         lifecycleScope.launch {
@@ -171,7 +240,6 @@ class MainActivity : AppCompatActivity() {
             val activeId = viewModel.activePlayerId.value ?: return@launch
             val activePlayer = players.find { it.id == activeId } ?: return@launch
 
-            // 1. Walk Steps
             for (stepPos in result.path) {
                 activePlayer.pacmanPosition = stepPos
                 adapter.updatePlayers(players)
@@ -179,41 +247,29 @@ class MainActivity : AppCompatActivity() {
                 delay(100)
             }
 
-            // 2. Handle Vulnerability Events
             if (result.eventType != GameEngine.PacmanEvent.NORMAL) {
                 delay(200)
-
                 when (result.eventType) {
                     GameEngine.PacmanEvent.SNAKE_BITE -> {
-                        // SNAKE: Image Popup + Fast Flash SFX
                         soundManager.playFastFlash()
                         triggerPopImage(R.drawable.pacman_snake_bite)
                         delay(1500)
                     }
                     GameEngine.PacmanEvent.LADDER_CLIMB -> {
-                        // LADDER: Video Popup (Color Specific) + No Extra SFX
                         val videoRes = when(activePlayer.id) {
-                            1 -> R.raw.video_ladder_p1 // RED
-                            2 -> R.raw.video_ladder_p2 // BLUE
-                            3 -> R.raw.video_ladder_p3 // GREEN
-                            4 -> R.raw.video_ladder_p4 // YELLOW
+                            1 -> R.raw.video_ladder_p1
+                            2 -> R.raw.video_ladder_p2
+                            3 -> R.raw.video_ladder_p3
+                            4 -> R.raw.video_ladder_p4
                             else -> R.raw.video_ladder_p1
                         }
-
-                        // We need a suspendCoroutine or simple delay if video logic is complex.
-                        // Here we trigger video and wait inside callback logic or just wait for standard time?
-                        // Better to pause execution until video done.
                         suspendCancellableCoroutine<Unit> { cont ->
-                            triggerPopVideo(videoRes) {
-                                cont.resume(Unit)
-                            }
+                            triggerPopVideo(videoRes) { cont.resume(Unit) }
                         }
                     }
                     else -> {}
                 }
             }
-
-            // 3. Finish
             delay(200)
             viewModel.onPacmanMoveFinished(result.finalPos)
         }
@@ -267,7 +323,8 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite ||
+                    moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
                     delay(1000)

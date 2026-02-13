@@ -3,15 +3,20 @@ package com.bytemantis.snald.ui
 import android.animation.ValueAnimator
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.SoundPool
 import android.util.SparseIntArray
 import android.view.animation.LinearInterpolator
 import com.bytemantis.snald.R
 
-class SoundManager(context: Context) {
+class SoundManager(private val context: Context) {
 
     private val soundPool: SoundPool
     private val soundMap = SparseIntArray()
+
+    // --- NEW: Background Music ---
+    private var menuMusicPlayer: MediaPlayer? = null
+    private var isMusicEnabled = true
 
     init {
         val audioAttributes = AudioAttributes.Builder()
@@ -24,6 +29,7 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
+        // Load SFX
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -32,14 +38,53 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
         soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
-
         soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
         soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
-
-        // NEW: Fast Flash SFX
         soundMap.put(R.raw.sfx_fast_flash, soundPool.load(context, R.raw.sfx_fast_flash, 1))
     }
 
+    // --- Music Control ---
+    fun startMenuMusic() {
+        if (!isMusicEnabled) return
+        if (menuMusicPlayer == null) {
+            try {
+                // Ensure 'bgm_menu' exists in res/raw/
+                menuMusicPlayer = MediaPlayer.create(context, R.raw.bgm_menu)
+                menuMusicPlayer?.isLooping = true
+                menuMusicPlayer?.setVolume(0.5f, 0.5f)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (menuMusicPlayer?.isPlaying == false) {
+            menuMusicPlayer?.start()
+        }
+    }
+
+    fun stopMenuMusic() {
+        try {
+            if (menuMusicPlayer?.isPlaying == true) {
+                menuMusicPlayer?.pause()
+                menuMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseMusic() {
+        if (menuMusicPlayer?.isPlaying == true) {
+            menuMusicPlayer?.pause()
+        }
+    }
+
+    fun resumeMusic() {
+        // Resume only if it was initialized and we want it playing
+        if (menuMusicPlayer != null && !menuMusicPlayer!!.isPlaying) {
+            menuMusicPlayer?.start()
+        }
+    }
+
+    // --- SFX Methods ---
     fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
     fun playHop(): Int = play(R.raw.sfx_hop)
     fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)

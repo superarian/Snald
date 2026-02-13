@@ -65,7 +65,6 @@
             android:layout_height="match_parent"
             android:layout_gravity="center"
             android:visibility="gone" />
-
     </FrameLayout>
 
     <LinearLayout
@@ -141,16 +140,114 @@
         android:id="@+id/layout_setup"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#D7CCC8"
         android:gravity="center"
         android:orientation="vertical"
         android:elevation="30dp"
-        android:visibility="visible">
-        <TextView android:text="SNALD BATTLE" android:textSize="40sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp" android:textColor="#000000"/>
-        <TextView android:text="Select Players" android:textSize="24sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="20dp" android:textColor="#000000"/>
-        <Button android:id="@+id/btn_2_players" android:text="2 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/btn_3_players" android:text="3 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/btn_4_players" android:text="4 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        android:visibility="gone"
+        android:background="#A68B7D"> <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="40dp"
+        android:background="@drawable/bg_panel_glossy">
+
+        <TextView
+            android:text="SNALD"
+            android:textSize="50sp"
+            android:textStyle="bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="30dp"
+            android:textColor="#FFFFFF"
+            android:shadowColor="#000000"
+            android:shadowRadius="10"/>
+
+        <TextView
+            android:text="Select Players"
+            android:textSize="18sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp"
+            android:textColor="#DDFFFFFF"/>
+
+        <Button
+            android:id="@+id/btn_2_players"
+            android:text="2 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+
+        <Button
+            android:id="@+id/btn_3_players"
+            android:text="3 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+
+        <Button
+            android:id="@+id/btn_4_players"
+            android:text="4 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+    </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_pause"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="35dp"
+        android:visibility="gone"
+        android:background="#AA000000">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="40dp"
+            android:background="@drawable/bg_panel_glossy">
+
+            <TextView
+                android:text="PAUSED"
+                android:textSize="40sp"
+                android:textStyle="bold"
+                android:textColor="#FFF"
+                android:layout_marginBottom="30dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <Button
+                android:id="@+id/btn_resume"
+                android:text="RESUME"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/btn_quit"
+                android:text="QUIT TO MENU"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"/>
+        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
@@ -163,7 +260,42 @@
         android:elevation="40dp"
         android:visibility="gone">
         <TextView android:text="GAME OVER!" android:textColor="#FFF" android:textSize="50sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
-        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:backgroundTint="#FFB300" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:background="@drawable/bg_button_glossy" app:backgroundTint="@null" android:textColor="#FFF" android:layout_width="200dp" android:layout_height="wrap_content"/>
     </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/layout_splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#212121"
+        android:elevation="50dp"
+        android:visibility="visible">
+
+        <ImageView
+            android:src="@drawable/ic_launcher_foreground"
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:layout_gravity="center"
+            android:scaleType="fitCenter"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SNALD"
+            android:textColor="#FFFFFF"
+            android:textSize="40sp"
+            android:textStyle="bold"
+            android:layout_gravity="center"
+            android:translationY="120dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Powered by ByteMantis"
+            android:textColor="#88FFFFFF"
+            android:textSize="14sp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="32dp"/>
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
