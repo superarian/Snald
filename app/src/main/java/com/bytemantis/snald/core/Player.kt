@@ -1,4 +1,4 @@
-package com.bytemantis.snald.model
+package com.bytemantis.snald.core
 
 data class Player(
     val id: Int,

@@ -1,6 +1,6 @@
-package com.bytemantis.snald.logic
+package com.bytemantis.snald.snaldgame
 
-import com.bytemantis.snald.model.Player
+import com.bytemantis.snald.core.Player
 
 class GameEngine {
 

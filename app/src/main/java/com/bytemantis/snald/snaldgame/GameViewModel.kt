@@ -1,26 +1,22 @@
-package com.bytemantis.snald.ui
+package com.bytemantis.snald.snaldgame
 
 import android.graphics.Color
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.bytemantis.snald.logic.GameEngine
-import com.bytemantis.snald.model.Player
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import com.bytemantis.snald.core.Player
 
 class GameViewModel : ViewModel() {
 
-    // --- NEW: Game State Management ---
+    // --- Game State Management (Splash Removed) ---
     enum class GameState {
-        SPLASH, MENU, PLAYING, PAUSED, GAME_OVER
+        MENU, PLAYING, PAUSED, GAME_OVER
     }
 
-    private val _gameState = MutableLiveData<GameState>(GameState.SPLASH)
+    // Start directly in MENU (Setup) state
+    private val _gameState = MutableLiveData<GameState>(GameState.MENU)
     val gameState: LiveData<GameState> = _gameState
 
-    // --- Existing LiveData ---
     private val engine = GameEngine()
 
     private val _players = MutableLiveData<List<Player>>()
@@ -48,23 +44,13 @@ class GameViewModel : ViewModel() {
     var isAnimationLocked = false
     private var currentTurnRoll = 0
 
-    init {
-        // Auto-transition from Splash to Menu
-        viewModelScope.launch {
-            delay(3000) // 3 Seconds Splash
-            if (_gameState.value == GameState.SPLASH) {
-                _gameState.value = GameState.MENU
-            }
-        }
-    }
-
-    // --- NEW: Back Key Logic ---
+    // --- Back Key Logic ---
     fun handleBackPress() {
         when (_gameState.value) {
             GameState.PLAYING -> _gameState.value = GameState.PAUSED
-            GameState.PAUSED -> _gameState.value = GameState.PLAYING // Toggle back
+            GameState.PAUSED -> _gameState.value = GameState.PLAYING
             GameState.GAME_OVER -> _gameState.value = GameState.MENU
-            else -> { /* Handled by Activity (exit app) */ }
+            else -> { /* Handled by Activity */ }
         }
     }
 
@@ -91,11 +77,8 @@ class GameViewModel : ViewModel() {
         _gameOver.value = false
         isAnimationLocked = false
 
-        // Transition to PLAYING
         _gameState.value = GameState.PLAYING
     }
-
-    // --- Existing Game Logic Below ---
 
     fun assignPacmanTo(newOwnerId: Int) {
         val currentList = _players.value ?: return
@@ -193,7 +176,7 @@ class GameViewModel : ViewModel() {
         val activePlayersCount = currentList.count { !it.isFinished }
         if (activePlayersCount <= 1) {
             _gameOver.value = true
-            _gameState.value = GameState.GAME_OVER // State Update
+            _gameState.value = GameState.GAME_OVER
         } else {
             nextTurn()
         }

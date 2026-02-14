@@ -1,6 +1,6 @@
 ============================================
 PROJECT: SNALD (Snake and Ladder)
-EXPORT DATE: 02/13/2026 03:11:07
+EXPORT DATE: 02/13/2026 16:18:31
 ============================================
 
 
@@ -345,11 +345,23 @@ import android.graphics.Color
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.bytemantis.snald.logic.GameEngine
 import com.bytemantis.snald.model.Player
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class GameViewModel : ViewModel() {
 
+    // --- NEW: Game State Management ---
+    enum class GameState {
+        SPLASH, MENU, PLAYING, PAUSED, GAME_OVER
+    }
+
+    private val _gameState = MutableLiveData<GameState>(GameState.SPLASH)
+    val gameState: LiveData<GameState> = _gameState
+
+    // --- Existing LiveData ---
     private val engine = GameEngine()
 
     private val _players = MutableLiveData<List<Player>>()
@@ -377,6 +389,36 @@ class GameViewModel : ViewModel() {
     var isAnimationLocked = false
     private var currentTurnRoll = 0
 
+    init {
+        // Auto-transition from Splash to Menu
+        viewModelScope.launch {
+            delay(3000) // 3 Seconds Splash
+            if (_gameState.value == GameState.SPLASH) {
+                _gameState.value = GameState.MENU
+            }
+        }
+    }
+
+    // --- NEW: Back Key Logic ---
+    fun handleBackPress() {
+        when (_gameState.value) {
+            GameState.PLAYING -> _gameState.value = GameState.PAUSED
+            GameState.PAUSED -> _gameState.value = GameState.PLAYING // Toggle back
+            GameState.GAME_OVER -> _gameState.value = GameState.MENU
+            else -> { /* Handled by Activity (exit app) */ }
+        }
+    }
+
+    fun resumeGame() {
+        if (_gameState.value == GameState.PAUSED) {
+            _gameState.value = GameState.PLAYING
+        }
+    }
+
+    fun quitToMenu() {
+        _gameState.value = GameState.MENU
+    }
+
     fun startGame(playerCount: Int) {
         val newPlayers = ArrayList<Player>()
         newPlayers.add(Player(1, "P1", Color.RED))
@@ -389,19 +431,18 @@ class GameViewModel : ViewModel() {
         _activePlayerId.value = newPlayers[0].id
         _gameOver.value = false
         isAnimationLocked = false
+
+        // Transition to PLAYING
+        _gameState.value = GameState.PLAYING
     }
 
-    // --- CONTRACTOR LOGIC: The "Single Pac-Man" Enforcer ---
+    // --- Existing Game Logic Below ---
+
     fun assignPacmanTo(newOwnerId: Int) {
         val currentList = _players.value ?: return
-
-        // 1. Wipe Pac-Man from existence (Contractor Patch)
         currentList.forEach { it.pacmanPosition = 0 }
-
-        // 2. Assign to new owner at HOME (100)
         val owner = currentList.find { it.id == newOwnerId }
         owner?.pacmanPosition = 100
-
         _players.value = currentList
     }
 
@@ -420,7 +461,6 @@ class GameViewModel : ViewModel() {
 
         val result = engine.calculateMove(activePlayer, currentTurnRoll)
 
-        // INTERCEPT: If 2 stars collected, FORCE Assignment (Steal/Spawn)
         if (result is GameEngine.MoveResult.PacmanSpawned) {
             assignPacmanTo(activePlayer.id)
         }
@@ -436,15 +476,12 @@ class GameViewModel : ViewModel() {
 
         if (finalPos == 100) {
             activePlayer.isFinished = true
-
-            // WINNER INHERITANCE: If winner had Pac-Man, pass to lowest player
             if (activePlayer.pacmanPosition > 0) {
                 activePlayer.pacmanPosition = 0
                 transferPacmanToLowest(currentList)
             }
         }
 
-        // Move Pac-Man if active
         if (activePlayer.isPacmanActive) {
             val pacResult = engine.calculatePacmanMove(activePlayer, currentTurnRoll)
             _pacmanMoveResult.value = pacResult
@@ -454,10 +491,9 @@ class GameViewModel : ViewModel() {
     }
 
     private fun transferPacmanToLowest(allPlayers: List<Player>) {
-        // Find active player closest to start (lowest position)
         val heir = allPlayers.filter { !it.isFinished }.minByOrNull { it.currentPosition }
         if (heir != null) {
-            assignPacmanTo(heir.id) // Inherit at 100
+            assignPacmanTo(heir.id)
         }
     }
 
@@ -472,8 +508,6 @@ class GameViewModel : ViewModel() {
     private fun finalizeTurn() {
         val currentList = _players.value ?: return
         val activePlayer = currentList[turnIndex]
-
-        // 1. Player Collision
         var enemy = engine.checkCollisions(activePlayer, currentList)
 
         if (enemy != null) {
@@ -482,11 +516,9 @@ class GameViewModel : ViewModel() {
                 _collisionEvent.value = null
                 checkWinConditionOrNextTurn()
             } else {
-                // KILLER STEAL: If victim had Pac-Man, Killer takes it at 100
                 if (enemy.isPacmanActive) {
                     assignPacmanTo(activePlayer.id)
                 }
-
                 val fatalPos = enemy.currentPosition
                 isAnimationLocked = true
                 _collisionEvent.value = Pair(enemy, fatalPos)
@@ -502,6 +534,7 @@ class GameViewModel : ViewModel() {
         val activePlayersCount = currentList.count { !it.isFinished }
         if (activePlayersCount <= 1) {
             _gameOver.value = true
+            _gameState.value = GameState.GAME_OVER // State Update
         } else {
             nextTurn()
         }
@@ -540,15 +573,20 @@ package com.bytemantis.snald.ui
 import android.animation.ValueAnimator
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.SoundPool
 import android.util.SparseIntArray
 import android.view.animation.LinearInterpolator
 import com.bytemantis.snald.R
 
-class SoundManager(context: Context) {
+class SoundManager(private val context: Context) {
 
     private val soundPool: SoundPool
     private val soundMap = SparseIntArray()
+
+    // --- NEW: Background Music ---
+    private var menuMusicPlayer: MediaPlayer? = null
+    private var isMusicEnabled = true
 
     init {
         val audioAttributes = AudioAttributes.Builder()
@@ -561,6 +599,7 @@ class SoundManager(context: Context) {
             .setAudioAttributes(audioAttributes)
             .build()
 
+        // Load SFX
         soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
         soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
         soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
@@ -569,14 +608,53 @@ class SoundManager(context: Context) {
         soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
         soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
         soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
-
         soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
         soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
-
-        // NEW: Fast Flash SFX
         soundMap.put(R.raw.sfx_fast_flash, soundPool.load(context, R.raw.sfx_fast_flash, 1))
     }
 
+    // --- Music Control ---
+    fun startMenuMusic() {
+        if (!isMusicEnabled) return
+        if (menuMusicPlayer == null) {
+            try {
+                // Ensure 'bgm_menu' exists in res/raw/
+                menuMusicPlayer = MediaPlayer.create(context, R.raw.bgm_menu)
+                menuMusicPlayer?.isLooping = true
+                menuMusicPlayer?.setVolume(0.5f, 0.5f)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (menuMusicPlayer?.isPlaying == false) {
+            menuMusicPlayer?.start()
+        }
+    }
+
+    fun stopMenuMusic() {
+        try {
+            if (menuMusicPlayer?.isPlaying == true) {
+                menuMusicPlayer?.pause()
+                menuMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseMusic() {
+        if (menuMusicPlayer?.isPlaying == true) {
+            menuMusicPlayer?.pause()
+        }
+    }
+
+    fun resumeMusic() {
+        // Resume only if it was initialized and we want it playing
+        if (menuMusicPlayer != null && !menuMusicPlayer!!.isPlaying) {
+            menuMusicPlayer?.start()
+        }
+    }
+
+    // --- SFX Methods ---
     fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
     fun playHop(): Int = play(R.raw.sfx_hop)
     fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
@@ -630,10 +708,12 @@ import android.view.View
 import android.view.animation.AnimationUtils
 import android.widget.Button
 import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
+import android.widget.LinearLayout
+import android.widget.FrameLayout
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -659,13 +739,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var statusText: TextView
 
-    // Overlays
+    // Overlays & Layouts
     private lateinit var textOverlayPop: TextView
     private lateinit var imgOverlayPop: ImageView
     private lateinit var videoOverlayPop: VideoView
     private lateinit var floatingToken: ImageView
+
+    // Screens
+    private lateinit var splashLayout: FrameLayout
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
+    private lateinit var pauseLayout: LinearLayout
 
     private var isAnimatingMove = false
     private var currentVisualPosition = 1
@@ -677,6 +761,22 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         setupObservers()
+        setupBackPressLogic()
+    }
+
+    private fun setupBackPressLogic() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Delegate logic to ViewModel
+                val state = viewModel.gameState.value
+                when (state) {
+                    GameViewModel.GameState.PLAYING -> viewModel.handleBackPress()
+                    GameViewModel.GameState.PAUSED -> viewModel.handleBackPress()
+                    GameViewModel.GameState.MENU -> finish() // Close app
+                    else -> {}
+                }
+            }
+        })
     }
 
     private fun setupUI() {
@@ -696,16 +796,22 @@ class MainActivity : AppCompatActivity() {
         imgOverlayPop = findViewById(R.id.img_overlay_pop)
         videoOverlayPop = findViewById(R.id.video_overlay_pop)
         floatingToken = findViewById(R.id.floating_token)
+
+        // Screen Layouts
+        splashLayout = findViewById(R.id.layout_splash)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
+        pauseLayout = findViewById(R.id.layout_pause)
 
-        findViewById<Button>(R.id.btn_2_players).setOnClickListener { startGame(2) }
-        findViewById<Button>(R.id.btn_3_players).setOnClickListener { startGame(3) }
-        findViewById<Button>(R.id.btn_4_players).setOnClickListener { startGame(4) }
-        findViewById<Button>(R.id.btn_restart).setOnClickListener {
-            gameOverLayout.visibility = View.GONE
-            setupLayout.visibility = View.VISIBLE
-        }
+        // Menu Buttons
+        findViewById<Button>(R.id.btn_2_players).setOnClickListener { viewModel.startGame(2) }
+        findViewById<Button>(R.id.btn_3_players).setOnClickListener { viewModel.startGame(3) }
+        findViewById<Button>(R.id.btn_4_players).setOnClickListener { viewModel.startGame(4) }
+
+        // Pause/Game Over Buttons
+        findViewById<Button>(R.id.btn_resume).setOnClickListener { viewModel.resumeGame() }
+        findViewById<Button>(R.id.btn_quit).setOnClickListener { viewModel.quitToMenu() }
+        findViewById<Button>(R.id.btn_restart).setOnClickListener { viewModel.quitToMenu() }
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
@@ -719,14 +825,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startGame(count: Int) {
-        setupLayout.visibility = View.GONE
-        findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
-        findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
-        viewModel.startGame(count)
-    }
-
     private fun setupObservers() {
+        // --- STATE OBSERVER ---
+        viewModel.gameState.observe(this) { state ->
+            updateScreenState(state)
+        }
+
         viewModel.players.observe(this) { players ->
             if (!isAnimatingMove && !viewModel.isAnimationLocked) {
                 adapter.updatePlayers(players)
@@ -768,14 +872,9 @@ class MainActivity : AppCompatActivity() {
             if (isOver) {
                 soundManager.playWin()
                 triggerPopText("GAME OVER", 0xFFFFFFFF.toInt(), R.anim.pop_zoom_fade)
-                lifecycleScope.launch {
-                    delay(2000)
-                    gameOverLayout.visibility = View.VISIBLE
-                }
             }
         }
 
-        // OBSERVE PAC-MAN
         viewModel.pacmanMoveResult.observe(this) { result ->
             if (result is GameEngine.PacmanResult.Move) {
                 animatePacmanMovement(result)
@@ -785,7 +884,55 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- ANIMATIONS ---
+    private fun updateScreenState(state: GameViewModel.GameState) {
+        // Hide All first
+        splashLayout.visibility = View.GONE
+        setupLayout.visibility = View.GONE
+        gameOverLayout.visibility = View.GONE
+        pauseLayout.visibility = View.GONE
+
+        when (state) {
+            GameViewModel.GameState.SPLASH -> {
+                splashLayout.visibility = View.VISIBLE
+                soundManager.startMenuMusic()
+            }
+            GameViewModel.GameState.MENU -> {
+                setupLayout.visibility = View.VISIBLE
+                soundManager.startMenuMusic()
+                // Reset board visual if needed
+            }
+            GameViewModel.GameState.PLAYING -> {
+                soundManager.stopMenuMusic()
+                val count = viewModel.players.value?.size ?: 2
+                findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
+                findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
+            }
+            GameViewModel.GameState.PAUSED -> {
+                pauseLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic() // Or keep playing? Usually pause silence or distinct music
+            }
+            GameViewModel.GameState.GAME_OVER -> {
+                gameOverLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic()
+            }
+        }
+    }
+
+    // --- Lifecycle Audio Management ---
+    override fun onPause() {
+        super.onPause()
+        soundManager.pauseMusic()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (viewModel.gameState.value == GameViewModel.GameState.MENU ||
+            viewModel.gameState.value == GameViewModel.GameState.SPLASH) {
+            soundManager.resumeMusic()
+        }
+    }
+
+    // --- ANIMATIONS (Keep existing logic exactly as is) ---
 
     private fun animatePacmanMovement(result: GameEngine.PacmanResult.Move) {
         lifecycleScope.launch {
@@ -793,7 +940,6 @@ class MainActivity : AppCompatActivity() {
             val activeId = viewModel.activePlayerId.value ?: return@launch
             val activePlayer = players.find { it.id == activeId } ?: return@launch
 
-            // 1. Walk Steps
             for (stepPos in result.path) {
                 activePlayer.pacmanPosition = stepPos
                 adapter.updatePlayers(players)
@@ -801,41 +947,29 @@ class MainActivity : AppCompatActivity() {
                 delay(100)
             }
 
-            // 2. Handle Vulnerability Events
             if (result.eventType != GameEngine.PacmanEvent.NORMAL) {
                 delay(200)
-
                 when (result.eventType) {
                     GameEngine.PacmanEvent.SNAKE_BITE -> {
-                        // SNAKE: Image Popup + Fast Flash SFX
                         soundManager.playFastFlash()
                         triggerPopImage(R.drawable.pacman_snake_bite)
                         delay(1500)
                     }
                     GameEngine.PacmanEvent.LADDER_CLIMB -> {
-                        // LADDER: Video Popup (Color Specific) + No Extra SFX
                         val videoRes = when(activePlayer.id) {
-                            1 -> R.raw.video_ladder_p1 // RED
-                            2 -> R.raw.video_ladder_p2 // BLUE
-                            3 -> R.raw.video_ladder_p3 // GREEN
-                            4 -> R.raw.video_ladder_p4 // YELLOW
+                            1 -> R.raw.video_ladder_p1
+                            2 -> R.raw.video_ladder_p2
+                            3 -> R.raw.video_ladder_p3
+                            4 -> R.raw.video_ladder_p4
                             else -> R.raw.video_ladder_p1
                         }
-
-                        // We need a suspendCoroutine or simple delay if video logic is complex.
-                        // Here we trigger video and wait inside callback logic or just wait for standard time?
-                        // Better to pause execution until video done.
                         suspendCancellableCoroutine<Unit> { cont ->
-                            triggerPopVideo(videoRes) {
-                                cont.resume(Unit)
-                            }
+                            triggerPopVideo(videoRes) { cont.resume(Unit) }
                         }
                     }
                     else -> {}
                 }
             }
-
-            // 3. Finish
             delay(200)
             viewModel.onPacmanMoveFinished(result.finalPos)
         }
@@ -889,7 +1023,8 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite ||
+                    moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
                     delay(1000)
@@ -1168,6 +1303,79 @@ FILE PATH: \app\src\main\res\anim\pop_zoom_fade.xml
         android:startOffset="2000"
         android:duration="1500" />
 </set>
+
+
+################################################################
+FILE PATH: \app\src\main\res\drawable\bg_button_glossy.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <solid android:color="#E65100" /> <stroke android:width="2dp" android:color="#FFD180" />
+        </shape>
+    </item>
+    <item>
+        <layer-list>
+            <item android:top="4dp">
+                <shape>
+                    <corners android:radius="16dp"/>
+                    <solid android:color="#BF360C"/>
+                </shape>
+            </item>
+            <item android:bottom="4dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="16dp" />
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#FFA726"
+                        android:endColor="#EF6C00"
+                        android:type="linear" />
+                    <stroke android:width="2dp" android:color="#FFE0B2" />
+                </shape>
+            </item>
+            <item android:bottom="20dp" android:left="4dp" android:right="4dp" android:top="2dp">
+                <shape>
+                    <corners android:topLeftRadius="12dp" android:topRightRadius="12dp"/>
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#66FFFFFF"
+                        android:endColor="#00FFFFFF"/>
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</selector>
+
+
+################################################################
+FILE PATH: \app\src\main\res\drawable\bg_panel_glossy.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <solid android:color="#99000000" /> <stroke android:width="1dp" android:color="#44FFFFFF" />
+        </shape>
+    </item>
+
+    <item android:top="2dp" android:left="2dp" android:right="2dp" android:bottom="50dp">
+        <shape android:shape="rectangle">
+            <corners android:topLeftRadius="22dp" android:topRightRadius="22dp" />
+            <gradient
+                android:angle="270"
+                android:startColor="#22FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:type="linear" />
+        </shape>
+    </item>
+</layer-list>
 
 
 ################################################################
@@ -1456,7 +1664,6 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
             android:layout_height="match_parent"
             android:layout_gravity="center"
             android:visibility="gone" />
-
     </FrameLayout>
 
     <LinearLayout
@@ -1532,16 +1739,114 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:id="@+id/layout_setup"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#D7CCC8"
         android:gravity="center"
         android:orientation="vertical"
         android:elevation="30dp"
-        android:visibility="visible">
-        <TextView android:text="SNALD BATTLE" android:textSize="40sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp" android:textColor="#000000"/>
-        <TextView android:text="Select Players" android:textSize="24sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="20dp" android:textColor="#000000"/>
-        <Button android:id="@+id/btn_2_players" android:text="2 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/btn_3_players" android:text="3 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/btn_4_players" android:text="4 Players" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        android:visibility="gone"
+        android:background="#A68B7D"> <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="40dp"
+        android:background="@drawable/bg_panel_glossy">
+
+        <TextView
+            android:text="SNALD"
+            android:textSize="50sp"
+            android:textStyle="bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="30dp"
+            android:textColor="#FFFFFF"
+            android:shadowColor="#000000"
+            android:shadowRadius="10"/>
+
+        <TextView
+            android:text="Select Players"
+            android:textSize="18sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp"
+            android:textColor="#DDFFFFFF"/>
+
+        <Button
+            android:id="@+id/btn_2_players"
+            android:text="2 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+
+        <Button
+            android:id="@+id/btn_3_players"
+            android:text="3 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+
+        <Button
+            android:id="@+id/btn_4_players"
+            android:text="4 Players"
+            android:layout_width="200dp"
+            android:layout_height="wrap_content"
+            android:textColor="#FFF"
+            android:background="@drawable/bg_button_glossy"
+            app:backgroundTint="@null"/>
+    </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_pause"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="35dp"
+        android:visibility="gone"
+        android:background="#AA000000">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="40dp"
+            android:background="@drawable/bg_panel_glossy">
+
+            <TextView
+                android:text="PAUSED"
+                android:textSize="40sp"
+                android:textStyle="bold"
+                android:textColor="#FFF"
+                android:layout_marginBottom="30dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <Button
+                android:id="@+id/btn_resume"
+                android:text="RESUME"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/btn_quit"
+                android:text="QUIT TO MENU"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"/>
+        </LinearLayout>
     </LinearLayout>
 
     <LinearLayout
@@ -1554,8 +1859,43 @@ FILE PATH: \app\src\main\res\layout\activity_main.xml
         android:elevation="40dp"
         android:visibility="gone">
         <TextView android:text="GAME OVER!" android:textColor="#FFF" android:textSize="50sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
-        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:backgroundTint="#FFB300" android:layout_width="200dp" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:background="@drawable/bg_button_glossy" app:backgroundTint="@null" android:textColor="#FFF" android:layout_width="200dp" android:layout_height="wrap_content"/>
     </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/layout_splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#212121"
+        android:elevation="50dp"
+        android:visibility="visible">
+
+        <ImageView
+            android:src="@drawable/ic_launcher_foreground"
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:layout_gravity="center"
+            android:scaleType="fitCenter"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SNALD"
+            android:textColor="#FFFFFF"
+            android:textSize="40sp"
+            android:textStyle="bold"
+            android:layout_gravity="center"
+            android:translationY="120dp"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Powered by ByteMantis"
+            android:textColor="#88FFFFFF"
+            android:textSize="14sp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="32dp"/>
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
 

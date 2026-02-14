@@ -1,4 +1,4 @@
-package com.bytemantis.snald
+package com.bytemantis.snald.snaldgame
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -12,24 +12,21 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import android.widget.LinearLayout
-import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.bytemantis.snald.logic.GameEngine
-import com.bytemantis.snald.model.Player
-import com.bytemantis.snald.ui.BoardAdapter
-import com.bytemantis.snald.ui.GameViewModel
-import com.bytemantis.snald.ui.SoundManager
+import com.bytemantis.snald.R
+import com.bytemantis.snald.core.Player
+import com.bytemantis.snald.core.SoundManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-class MainActivity : AppCompatActivity() {
+class SnaldActivity : AppCompatActivity() {
 
     private val viewModel: GameViewModel by viewModels()
     private val adapter = BoardAdapter()
@@ -45,8 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoOverlayPop: VideoView
     private lateinit var floatingToken: ImageView
 
-    // Screens
-    private lateinit var splashLayout: FrameLayout
+    // Screens (Splash removed)
     private lateinit var setupLayout: LinearLayout
     private lateinit var gameOverLayout: LinearLayout
     private lateinit var pauseLayout: LinearLayout
@@ -56,6 +52,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // We still use activity_main.xml as the layout for Snald for now
         setContentView(R.layout.activity_main)
         soundManager = SoundManager(this)
 
@@ -67,13 +64,13 @@ class MainActivity : AppCompatActivity() {
     private fun setupBackPressLogic() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                // Delegate logic to ViewModel
                 val state = viewModel.gameState.value
                 when (state) {
                     GameViewModel.GameState.PLAYING -> viewModel.handleBackPress()
                     GameViewModel.GameState.PAUSED -> viewModel.handleBackPress()
-                    GameViewModel.GameState.MENU -> finish() // Close app
-                    else -> {}
+                    GameViewModel.GameState.MENU -> finish() // Return to Hub
+                    GameViewModel.GameState.GAME_OVER -> finish() // Return to Hub
+                    else -> finish()
                 }
             }
         })
@@ -97,21 +94,17 @@ class MainActivity : AppCompatActivity() {
         videoOverlayPop = findViewById(R.id.video_overlay_pop)
         floatingToken = findViewById(R.id.floating_token)
 
-        // Screen Layouts
-        splashLayout = findViewById(R.id.layout_splash)
         setupLayout = findViewById(R.id.layout_setup)
         gameOverLayout = findViewById(R.id.layout_game_over)
         pauseLayout = findViewById(R.id.layout_pause)
 
-        // Menu Buttons
         findViewById<Button>(R.id.btn_2_players).setOnClickListener { viewModel.startGame(2) }
         findViewById<Button>(R.id.btn_3_players).setOnClickListener { viewModel.startGame(3) }
         findViewById<Button>(R.id.btn_4_players).setOnClickListener { viewModel.startGame(4) }
 
-        // Pause/Game Over Buttons
         findViewById<Button>(R.id.btn_resume).setOnClickListener { viewModel.resumeGame() }
-        findViewById<Button>(R.id.btn_quit).setOnClickListener { viewModel.quitToMenu() }
-        findViewById<Button>(R.id.btn_restart).setOnClickListener { viewModel.quitToMenu() }
+        findViewById<Button>(R.id.btn_quit).setOnClickListener { finish() } // Quit returns to Hub
+        findViewById<Button>(R.id.btn_restart).setOnClickListener { viewModel.quitToMenu() } // Restarts local game
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
@@ -126,7 +119,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
-        // --- STATE OBSERVER ---
         viewModel.gameState.observe(this) { state ->
             updateScreenState(state)
         }
@@ -185,21 +177,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateScreenState(state: GameViewModel.GameState) {
-        // Hide All first
-        splashLayout.visibility = View.GONE
         setupLayout.visibility = View.GONE
         gameOverLayout.visibility = View.GONE
         pauseLayout.visibility = View.GONE
 
         when (state) {
-            GameViewModel.GameState.SPLASH -> {
-                splashLayout.visibility = View.VISIBLE
-                soundManager.startMenuMusic()
-            }
             GameViewModel.GameState.MENU -> {
+                // Show player select setup immediately
                 setupLayout.visibility = View.VISIBLE
                 soundManager.startMenuMusic()
-                // Reset board visual if needed
             }
             GameViewModel.GameState.PLAYING -> {
                 soundManager.stopMenuMusic()
@@ -209,7 +195,7 @@ class MainActivity : AppCompatActivity() {
             }
             GameViewModel.GameState.PAUSED -> {
                 pauseLayout.visibility = View.VISIBLE
-                soundManager.stopMenuMusic() // Or keep playing? Usually pause silence or distinct music
+                soundManager.stopMenuMusic()
             }
             GameViewModel.GameState.GAME_OVER -> {
                 gameOverLayout.visibility = View.VISIBLE
@@ -218,7 +204,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- Lifecycle Audio Management ---
     override fun onPause() {
         super.onPause()
         soundManager.pauseMusic()
@@ -226,13 +211,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (viewModel.gameState.value == GameViewModel.GameState.MENU ||
-            viewModel.gameState.value == GameViewModel.GameState.SPLASH) {
+        if (viewModel.gameState.value == GameViewModel.GameState.MENU) {
             soundManager.resumeMusic()
         }
     }
-
-    // --- ANIMATIONS (Keep existing logic exactly as is) ---
 
     private fun animatePacmanMovement(result: GameEngine.PacmanResult.Move) {
         lifecycleScope.launch {
@@ -305,7 +287,7 @@ class MainActivity : AppCompatActivity() {
             val moveResult = viewModel.lastMoveResult.value
 
             if (moveResult is GameEngine.MoveResult.Stay) {
-                Toast.makeText(this@MainActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@SnaldActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
                 delay(500)
                 isAnimatingMove = false
                 viewModel.onPlayerMoveFinished(activePlayer.currentPosition)
@@ -323,8 +305,7 @@ class MainActivity : AppCompatActivity() {
             var finalPos = currentVisualPosition
 
             if (moveResult != null) {
-                if (moveResult is GameEngine.MoveResult.SnakeBite ||
-                    moveResult is GameEngine.MoveResult.LadderClimb) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
                     delay(300)
                     handleMoveResult(moveResult)
                     delay(1000)
@@ -343,8 +324,6 @@ class MainActivity : AppCompatActivity() {
             viewModel.onPlayerMoveFinished(finalPos)
         }
     }
-
-    // --- UTILS ---
 
     private fun updateStatusText(playerId: Int) {
         statusText.text = "Player $playerId's Turn"

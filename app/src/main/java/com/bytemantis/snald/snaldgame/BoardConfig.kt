@@ -1,4 +1,4 @@
-package com.bytemantis.snald.logic
+package com.bytemantis.snald.snaldgame
 
 object BoardConfig {
     const val BOARD_SIZE = 100

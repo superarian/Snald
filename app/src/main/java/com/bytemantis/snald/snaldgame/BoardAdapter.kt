@@ -1,4 +1,4 @@
-package com.bytemantis.snald.ui
+package com.bytemantis.snald.snaldgame
 
 import android.view.LayoutInflater
 import android.view.View
@@ -8,8 +8,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.bytemantis.snald.R
-import com.bytemantis.snald.logic.BoardConfig
-import com.bytemantis.snald.model.Player
+import com.bytemantis.snald.core.Player
 
 class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
 

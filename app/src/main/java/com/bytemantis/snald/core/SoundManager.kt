@@ -1,4 +1,4 @@
-package com.bytemantis.snald.ui
+package com.bytemantis.snald.core
 
 import android.animation.ValueAnimator
 import android.content.Context
