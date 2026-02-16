@@ -99,8 +99,9 @@ class LudoActivity : AppCompatActivity() {
 
         diceViews.forEach { (id, view) ->
             view.setOnClickListener {
+                val activeIdx = viewModel.activePlayerIndex.value ?: 0
                 if (viewModel.gameState.value == LudoViewModel.State.WAITING_FOR_ROLL &&
-                    id == (viewModel.activePlayerIndex.value!! + 1)) {
+                    id == (activeIdx + 1)) {
                     viewModel.rollDice()
                 }
             }
@@ -120,18 +121,10 @@ class LudoActivity : AppCompatActivity() {
             if (message != null) showVictoryPopUp(message)
         }
 
-        // OWNER FIX: Spawn Aura Sound
-        viewModel.spawnEvent.observe(this) { spawn ->
-            if (spawn) {
-                soundManager.playStarCollect() // Aura sound
-            }
-        }
-
-        // OWNER FIX: Safe Zone Sound
-        viewModel.safeZoneEvent.observe(this) { isSafe ->
-            if (isSafe) {
-                // Calls the method you added to SoundManager
-                soundManager.playSafeZone()
+        // --- NEW: Single Source of Truth for Turn Animation ---
+        viewModel.turnUpdate.observe(this) { update ->
+            if (update != null) {
+                playTurnSequence(update)
             }
         }
 
@@ -148,67 +141,86 @@ class LudoActivity : AppCompatActivity() {
         viewModel.activePlayerIndex.observe(this) { index ->
             highlightActiveDice(index + 1)
         }
+    }
 
-        viewModel.moveEvent.observe(this) { event ->
-            if (event != null) {
-                val (playerIdx, tokenIdx, steps) = event
-                val tokenView = allTokenViews[playerIdx][tokenIdx]
-                val currentPosIndex = viewModel.players.value!![playerIdx].tokenPositions[tokenIdx]
+    // --- THE DIRECTOR: Plays the sequence Hop -> Sound -> Kill -> Finish ---
+    private fun playTurnSequence(update: LudoViewModel.TurnUpdate) {
+        val playerIdx = update.playerIdx
+        val tokenIdx = update.tokenIdx
+        val tokenView = allTokenViews[playerIdx][tokenIdx]
 
-                // Fix for spawn logic: if steps is 0 (spawn), startPos is -1 (Base)
-                val startPos = if(steps == 0) -1 else currentPosIndex - steps
+        // Safety check: ensure view exists
+        if (tokenView.parent == null) return
 
-                clearBadges()
-                tokenView.visibility = View.VISIBLE
+        val currentPlayer = viewModel.players.value!![playerIdx]
+        val currentPosIndex = currentPlayer.tokenPositions[tokenIdx]
 
-                lifecycleScope.launch {
-                    animManager.animateHop(
-                        tokenView, playerIdx, startPos, steps,
-                        cellW, cellH, boardOffsetX, boardOffsetY
-                    )
-                    viewModel.onAnimationFinished()
-                    renderBoardState()
+        // Calculate visual start position
+        // If Spawn (isSpawn=true), we visually start at Base (-1) and jump to Start (0).
+        // If Normal move, we start at (Target - Steps).
+        val startPos = if (update.isSpawn) -1 else (currentPosIndex - update.visualSteps)
+
+        clearBadges()
+        tokenView.visibility = View.VISIBLE
+
+        lifecycleScope.launch {
+
+            // 1. ANIMATE HOP
+            // The AnimationManager handles the path logic.
+            animManager.animateHop(
+                tokenView, playerIdx, startPos, update.visualSteps,
+                cellW, cellH, boardOffsetX, boardOffsetY
+            )
+
+            // 2. PLAY SOUND (Synced after movement)
+            when (update.soundToPlay) {
+                LudoViewModel.SoundType.SAFE -> soundManager.playSafeZone()
+                LudoViewModel.SoundType.WIN -> soundManager.playWin()
+                // Kill sound is handled inside the death animation block below for better sync
+                LudoViewModel.SoundType.NONE -> {
+                    if (update.isSpawn) soundManager.playStarCollect() // Aura/Spawn sound
                 }
+                else -> {}
             }
-        }
 
-        viewModel.killEvent.observe(this) { event ->
-            if (event != null) {
-                val (victimPlayerIdx, victimTokenIdx, fromPosIndex) = event
-                val tokenView = allTokenViews[victimPlayerIdx][victimTokenIdx]
-                val startCoord = LudoBoardConfig.getGlobalCoord(victimPlayerIdx, fromPosIndex) ?: Pair(0,0)
-                val basePos = getBaseCoord(victimPlayerIdx, victimTokenIdx)
+            // 3. ANIMATE KILL (If any)
+            if (update.killInfo != null) {
+                val k = update.killInfo
+                val victimView = allTokenViews[k.victimPlayerIdx][k.victimTokenIdx]
+                val startCoord = LudoBoardConfig.getGlobalCoord(k.victimPlayerIdx, k.fromPos) ?: Pair(0,0)
+                val basePos = getBaseCoord(k.victimPlayerIdx, k.victimTokenIdx)
 
-                lifecycleScope.launch {
-                    soundManager.playSlideBack()
-                    animManager.animateDeathSlide(
-                        tokenView, startCoord, basePos,
-                        cellW, cellH, boardOffsetX, boardOffsetY
-                    )
-                    renderBoardState()
-                }
+                // Play Kill Sound NOW (Synced with slide start)
+                soundManager.playSlideBack()
+
+                animManager.animateDeathSlide(
+                    victimView, startCoord, basePos,
+                    cellW, cellH, boardOffsetX, boardOffsetY
+                )
             }
+
+            // 4. RENDER FINAL STATE (Snap everything to grid)
+            renderBoardState()
+
+            // 5. NOTIFY VIEWMODEL DONE
+            // This triggers the Extra Turn check or Next Player logic
+            delay(200)
+            viewModel.onTurnAnimationsFinished()
         }
     }
 
     private fun renderBoardState() {
         val players = viewModel.players.value ?: return
 
-        // --- OWNER ADDITION: Update Strategy Display ---
+        // Update Strategy Display
         players.forEachIndexed { index, player ->
-            // Calculate Total Progress
-            // Max Steps = 57 * 4 tokens = 228
             var totalSteps = 0
             player.tokenPositions.forEach { pos ->
-                if (pos > -1) {
-                    totalSteps += pos
-                }
+                if (pos > -1) totalSteps += pos
             }
-            // Calculate percentage
             val percentage = (totalSteps / 228.0 * 100).toInt()
             progressBars[index]?.progress = percentage
         }
-        // ----------------------------------------------
 
         clearBadges()
         val occupationMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<Int, Int>>>()
@@ -317,8 +329,8 @@ class LudoActivity : AppCompatActivity() {
         allTokenViews.forEach { it.clear() }
         spawnSet(0, LudoBoardConfig.RED_BASE_PRECISE, R.drawable.red_token)
         spawnSet(1, LudoBoardConfig.GREEN_BASE_PRECISE, R.drawable.green_token)
-        spawnSet(2, LudoBoardConfig.BLUE_BASE_PRECISE, R.drawable.blue_token)     // P3 is Blue
-        spawnSet(3, LudoBoardConfig.YELLOW_BASE_PRECISE, R.drawable.yellow_token) // P4 is Yellow
+        spawnSet(2, LudoBoardConfig.BLUE_BASE_PRECISE, R.drawable.blue_token)
+        spawnSet(3, LudoBoardConfig.YELLOW_BASE_PRECISE, R.drawable.yellow_token)
     }
 
     private fun spawnSet(playerIndex: Int, basePositions: List<Pair<Float, Float>>, resId: Int) {
@@ -326,6 +338,7 @@ class LudoActivity : AppCompatActivity() {
             val token = spawnTokenImage(resId, pos)
             token.setOnClickListener {
                 val activeIdx = viewModel.activePlayerIndex.value ?: -1
+                // Can only click own tokens
                 if (activeIdx == playerIndex) {
                     viewModel.onTokenClicked(tokenIndex)
                 }
@@ -357,7 +370,6 @@ class LudoActivity : AppCompatActivity() {
         view.y = globalY - (tokenSize / 2)
     }
 
-    // OWNER FIX: Swapped P3 and P4 to match visual layout
     private fun getBaseCoord(pIdx: Int, tIdx: Int): Pair<Float, Float> {
         val list = when(pIdx) {
             0 -> LudoBoardConfig.RED_BASE_PRECISE

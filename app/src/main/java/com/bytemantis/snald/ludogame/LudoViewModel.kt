@@ -11,6 +11,20 @@ class LudoViewModel : ViewModel() {
 
     enum class State { WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
 
+    // --- Data to send to View ---
+    data class TurnUpdate(
+        val playerIdx: Int,
+        val tokenIdx: Int,
+        val visualSteps: Int,
+        val isSpawn: Boolean,
+        val soundToPlay: SoundType,
+        val killInfo: KillInfo?
+    )
+
+    enum class SoundType { NONE, SAFE, KILL, WIN }
+    data class KillInfo(val victimPlayerIdx: Int, val victimTokenIdx: Int, val fromPos: Int)
+
+    // --- LiveData ---
     private val _gameState = MutableLiveData(State.WAITING_FOR_ROLL)
     val gameState: LiveData<State> = _gameState
 
@@ -23,49 +37,34 @@ class LudoViewModel : ViewModel() {
     private val _diceValue = MutableLiveData<Int>()
     val diceValue: LiveData<Int> = _diceValue
 
-    private val _statusMessage = MutableLiveData("Welcome to Ludo!")
+    private val _statusMessage = MutableLiveData("Welcome Back!")
     val statusMessage: LiveData<String> = _statusMessage
+
+    // SINGLE Event Channel for Moves (Fixes Crash)
+    private val _turnUpdate = MutableLiveData<TurnUpdate?>()
+    val turnUpdate: LiveData<TurnUpdate?> = _turnUpdate
 
     private val _victoryAnnouncement = MutableLiveData<String?>()
     val victoryAnnouncement: LiveData<String?> = _victoryAnnouncement
 
-    // Rank counter to persist victory order
+    private val ruleEngine = LudoRuleEngine()
     private var rankCounter = 0
 
-    private val _moveEvent = MutableLiveData<Triple<Int, Int, Int>?>()
-    val moveEvent: LiveData<Triple<Int, Int, Int>?> = _moveEvent
-
-    private val _killEvent = MutableLiveData<Triple<Int, Int, Int>?>()
-    val killEvent: LiveData<Triple<Int, Int, Int>?> = _killEvent
-
-    // Event: Spawn (Play Aura Sound)
-    private val _spawnEvent = MutableLiveData<Boolean>()
-    val spawnEvent: LiveData<Boolean> = _spawnEvent
-
-    // Event: Safe Zone (Play Safe Sound)
-    private val _safeZoneEvent = MutableLiveData<Boolean>()
-    val safeZoneEvent: LiveData<Boolean> = _safeZoneEvent
-
-    private val ruleEngine = LudoRuleEngine()
+    // Track if the current turn should continue (Roll 6, Kill, Win)
+    private var shouldContinueTurn = false
 
     init {
-        // OWNER FIX: Persistence Check
-        if (LudoGameStateHolder.hasActiveGame) {
-            restoreGame()
-        } else {
-            initNewGame()
-        }
+        if (LudoGameStateHolder.hasActiveGame) restoreGame() else initNewGame()
     }
 
     private fun initNewGame() {
-        // OWNER FIX: Changed Order to Red -> Green -> Blue -> Yellow
         _players.value = listOf(
             LudoPlayer(1, "RED"),
             LudoPlayer(2, "GREEN"),
-            LudoPlayer(3, "BLUE"),   // P3 is now BLUE (Right Side)
-            LudoPlayer(4, "YELLOW")  // P4 is now YELLOW (Bottom Side)
+            LudoPlayer(3, "BLUE"),
+            LudoPlayer(4, "YELLOW")
         )
-        _statusMessage.value = "Red's Turn! Roll the dice."
+        _statusMessage.value = "Red's Turn!"
         rankCounter = 0
     }
 
@@ -78,9 +77,7 @@ class LudoViewModel : ViewModel() {
         rankCounter = LudoGameStateHolder.rankCounter
     }
 
-    fun quitGame() {
-        LudoGameStateHolder.clear()
-    }
+    fun quitGame() { LudoGameStateHolder.clear() }
 
     fun saveCurrentState() {
         LudoGameStateHolder.saveState(
@@ -95,150 +92,156 @@ class LudoViewModel : ViewModel() {
 
     fun rollDice() {
         if (_gameState.value != State.WAITING_FOR_ROLL) return
-
         _gameState.value = State.ANIMATING
+
+        // Reset turn continuation flag
+        shouldContinueTurn = false
+
         val roll = (1..6).random()
         _diceValue.value = roll
 
+        // Mark flag if rolled a 6
+        if (roll == 6) shouldContinueTurn = true
+
         viewModelScope.launch {
             delay(500)
-
             val activeIdx = _activePlayerIndex.value!!
-            val currentPlayers = _players.value!!
-            val activePlayer = currentPlayers[activeIdx]
+            val player = _players.value!![activeIdx]
 
-            // Get valid moves to check for auto-move
-            val validTokenIndices = getValidTokenIndices(activeIdx, activePlayer, roll, currentPlayers)
+            // Auto-move logic
+            val validIndices = getValidTokenIndices(activeIdx, player, roll, _players.value!!)
 
-            if (validTokenIndices.isNotEmpty()) {
-                // OWNER FIX: Auto-move if only 1 option
-                if (validTokenIndices.size == 1) {
+            if (validIndices.isNotEmpty()) {
+                if (validIndices.size == 1) {
                     _statusMessage.value = "Auto Moving..."
                     _gameState.value = State.WAITING_FOR_MOVE
-                    delay(300) // Negligible pause
-                    onTokenClicked(validTokenIndices[0])
+                    delay(300)
+                    onTokenClicked(validIndices[0])
                 } else {
-                    _statusMessage.value = "Select a token to move."
+                    _statusMessage.value = "Select token."
                     _gameState.value = State.WAITING_FOR_MOVE
                 }
             } else {
-                _statusMessage.value = "No moves possible!"
+                _statusMessage.value = "No moves!"
                 delay(1000)
-                nextTurn()
+                // If no moves, we lose the turn (even if we rolled 6)
+                shouldContinueTurn = false
+                endTurnLogic()
             }
         }
     }
 
-    private fun getValidTokenIndices(
-        playerIdx: Int,
-        player: LudoPlayer,
-        roll: Int,
-        allPlayers: List<LudoPlayer>
-    ): List<Int> {
-        val validIndices = mutableListOf<Int>()
+    private fun getValidTokenIndices(pIdx: Int, p: LudoPlayer, roll: Int, all: List<LudoPlayer>): List<Int> {
+        val list = mutableListOf<Int>()
         for (i in 0 until 4) {
-            val currentPos = player.tokenPositions[i]
-            if (currentPos == 57) continue
-            val result = ruleEngine.calculateMove(playerIdx, i, currentPos, roll, allPlayers)
-            if (result !is LudoRuleEngine.MoveResult.Invalid) {
-                validIndices.add(i)
-            }
+            val res = ruleEngine.calculateMove(pIdx, i, p.tokenPositions[i], roll, all)
+            if (res !is LudoRuleEngine.MoveResult.Invalid) list.add(i)
         }
-        return validIndices
+        return list
     }
 
     fun onTokenClicked(tokenIndex: Int) {
         if (_gameState.value != State.WAITING_FOR_MOVE) return
 
-        val playerIndex = _activePlayerIndex.value!!
-        val player = _players.value!![playerIndex]
+        val pIdx = _activePlayerIndex.value!!
+        val player = _players.value!![pIdx]
         val roll = _diceValue.value!!
         val currentPos = player.tokenPositions[tokenIndex]
 
-        val result = ruleEngine.calculateMove(playerIndex, tokenIndex, currentPos, roll, _players.value!!)
-
+        val result = ruleEngine.calculateMove(pIdx, tokenIndex, currentPos, roll, _players.value!!)
         if (result is LudoRuleEngine.MoveResult.Invalid) return
 
         _gameState.value = State.ANIMATING
 
-        // OWNER FIX: Spawn Glitch Logic
-        // If spawning (-1 to 0), visualSteps is 0 so AnimationManager stops immediately after the spawn hop.
+        // Update Extra Turn Logic based on Result
+        if (result.givesExtraTurn) shouldContinueTurn = true
+
         val isSpawn = currentPos == -1
         val visualSteps = if (isSpawn) 0 else roll
 
-        if (isSpawn) {
-            _spawnEvent.value = true
-        }
+        var soundToPlay = SoundType.NONE
+        var killInfo: KillInfo? = null
 
+        // APPLY STATE CHANGES
         when(result) {
             is LudoRuleEngine.MoveResult.MoveOnly -> {
                 player.tokenPositions[tokenIndex] = result.newPosIndex
+                // If spawn, we might want a special sound, handled by visualSteps=0 check in Activity usually
             }
             is LudoRuleEngine.MoveResult.SafeZoneLanded -> {
-                // OWNER FIX: Safe Zone Logic
                 player.tokenPositions[tokenIndex] = result.newPosIndex
-                _safeZoneEvent.value = true
+                soundToPlay = SoundType.SAFE
             }
             is LudoRuleEngine.MoveResult.SafeStack -> {
                 player.tokenPositions[tokenIndex] = result.newPosIndex
-                _statusMessage.value = "Safe!"
-                _safeZoneEvent.value = true
+                soundToPlay = SoundType.SAFE
             }
             is LudoRuleEngine.MoveResult.Kill -> {
                 player.tokenPositions[tokenIndex] = result.newPosIndex
-                val victimPlayer = _players.value!![result.victimPlayerIdx]
-                val victimCurrentPos = victimPlayer.tokenPositions[result.victimTokenIdx]
-                victimPlayer.tokenPositions[result.victimTokenIdx] = -1
-                _killEvent.value = Triple(result.victimPlayerIdx, result.victimTokenIdx, victimCurrentPos)
+                val victimP = _players.value!![result.victimPlayerIdx]
+                val victimPos = victimP.tokenPositions[result.victimTokenIdx]
+
+                // Kill logic: Reset victim to -1
+                victimP.tokenPositions[result.victimTokenIdx] = -1
+
+                killInfo = KillInfo(result.victimPlayerIdx, result.victimTokenIdx, victimPos)
+                soundToPlay = SoundType.KILL
             }
             is LudoRuleEngine.MoveResult.Win -> {
                 player.tokenPositions[tokenIndex] = 57
+                soundToPlay = SoundType.WIN
                 if (player.getFinishedCount() == 4) {
                     rankCounter++
-                    val suffix = when(rankCounter) { 1->"1ST"; 2->"2ND"; 3->"3RD"; else->"${rankCounter}TH" }
-                    _victoryAnnouncement.value = "${player.colorName} TAKES $suffix SPOT!"
-                } else {
-                    _statusMessage.value = "One token home!"
+                    _victoryAnnouncement.value = "${player.colorName} FINISHED!"
                 }
             }
             else -> {}
         }
 
-        _moveEvent.value = Triple(playerIndex, tokenIndex, visualSteps)
+        // Send ONE update packet
+        _turnUpdate.value = TurnUpdate(
+            playerIdx = pIdx,
+            tokenIdx = tokenIndex,
+            visualSteps = visualSteps,
+            isSpawn = isSpawn,
+            soundToPlay = soundToPlay,
+            killInfo = killInfo
+        )
+
         saveCurrentState()
     }
 
-    fun onAnimationFinished() {
-        _moveEvent.value = null
-        _killEvent.value = null
-        _spawnEvent.value = false
-        _safeZoneEvent.value = false // Reset
-        _victoryAnnouncement.value = null
+    // Called by Activity after ALL animations (hop + kill + sound) are done
+    fun onTurnAnimationsFinished() {
+        _turnUpdate.value = null // Clear event
+        endTurnLogic()
+    }
 
+    private fun endTurnLogic() {
+        // Victory Check
         val currentPlayer = _players.value!![_activePlayerIndex.value!!]
         if (currentPlayer.getFinishedCount() == 4) {
-            nextTurn()
+            // Even if finished, let's see if we pass turn.
+            // Actually if finished, we skip them next time.
+            passTurn()
             return
         }
 
-        val roll = _diceValue.value!!
-        if (roll == 6) {
-            _statusMessage.value = "Rolled a 6! Roll again."
+        if (shouldContinueTurn) {
+            _statusMessage.value = "Extra Turn! Roll again."
             _gameState.value = State.WAITING_FOR_ROLL
         } else {
-            nextTurn()
+            passTurn()
         }
         saveCurrentState()
     }
 
-    private fun nextTurn() {
+    private fun passTurn() {
         val currentPlayers = _players.value!!
         val activeCount = currentPlayers.count { it.getFinishedCount() < 4 }
-
         if (activeCount < 2) {
-            _statusMessage.value = "GAME OVER!"
+            _statusMessage.value = "GAME OVER"
             _gameState.value = State.GAME_OVER
-            LudoGameStateHolder.clear()
             return
         }
 
@@ -252,6 +255,5 @@ class LudoViewModel : ViewModel() {
         _gameState.value = State.WAITING_FOR_ROLL
         val color = currentPlayers[nextIndex].colorName
         _statusMessage.value = "$color's Turn!"
-        saveCurrentState()
     }
 }
