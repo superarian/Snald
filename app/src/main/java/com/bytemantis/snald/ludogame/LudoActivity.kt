@@ -9,6 +9,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
@@ -24,15 +25,14 @@ class LudoActivity : AppCompatActivity() {
 
     private val viewModel: LudoViewModel by viewModels()
     private lateinit var soundManager: SoundManager
-    private lateinit var animManager: LudoAnimationManager
+
+    // REMOVED: animManager (The source of the crash)
 
     private lateinit var boardImage: ImageView
     private lateinit var statusText: TextView
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var tokenOverlay: FrameLayout
     private lateinit var victoryPopText: TextView
-
-    // Strategy Bars
     private lateinit var progressBars: Map<Int, ProgressBar>
 
     private val allTokenViews = mutableListOf<MutableList<ImageView>>()
@@ -48,7 +48,7 @@ class LudoActivity : AppCompatActivity() {
         setContentView(R.layout.activity_ludo)
 
         soundManager = SoundManager(this)
-        animManager = LudoAnimationManager(soundManager)
+        // REMOVED: animManager initialization
 
         allTokenViews.clear()
         repeat(4) { allTokenViews.add(mutableListOf()) }
@@ -56,7 +56,6 @@ class LudoActivity : AppCompatActivity() {
         setupUI()
         setupObservers()
 
-        // Handle Back Button - Game persists in ViewModel/Holder
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 viewModel.saveCurrentState()
@@ -78,7 +77,6 @@ class LudoActivity : AppCompatActivity() {
             4 to findViewById(R.id.dice_p4)
         )
 
-        // Initialize Strategy Progress Bars
         progressBars = mapOf(
             0 to findViewById(R.id.progress_p1),
             1 to findViewById(R.id.progress_p2),
@@ -121,10 +119,15 @@ class LudoActivity : AppCompatActivity() {
             if (message != null) showVictoryPopUp(message)
         }
 
-        // --- NEW: Single Source of Truth for Turn Animation ---
         viewModel.turnUpdate.observe(this) { update ->
             if (update != null) {
-                playTurnSequence(update)
+                try {
+                    playTurnSequence(update)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    Toast.makeText(this, "Safe Mode: ${e.message}", Toast.LENGTH_SHORT).show()
+                    viewModel.onTurnAnimationsFinished()
+                }
             }
         }
 
@@ -143,76 +146,129 @@ class LudoActivity : AppCompatActivity() {
         }
     }
 
-    // --- THE DIRECTOR: Plays the sequence Hop -> Sound -> Kill -> Finish ---
+    // --- MANUAL ANIMATION CONTROLLER (No External Manager) ---
     private fun playTurnSequence(update: LudoViewModel.TurnUpdate) {
         val playerIdx = update.playerIdx
         val tokenIdx = update.tokenIdx
-        val tokenView = allTokenViews[playerIdx][tokenIdx]
 
-        // Safety check: ensure view exists
-        if (tokenView.parent == null) return
+        if (playerIdx !in 0..3 || tokenIdx !in 0..3) return
+
+        val tokenView = allTokenViews[playerIdx][tokenIdx]
+        if (tokenView.parent == null) {
+            viewModel.onTurnAnimationsFinished()
+            return
+        }
 
         val currentPlayer = viewModel.players.value!![playerIdx]
         val currentPosIndex = currentPlayer.tokenPositions[tokenIdx]
 
-        // Calculate visual start position
-        // If Spawn (isSpawn=true), we visually start at Base (-1) and jump to Start (0).
-        // If Normal move, we start at (Target - Steps).
-        val startPos = if (update.isSpawn) -1 else (currentPosIndex - update.visualSteps)
-
         clearBadges()
         tokenView.visibility = View.VISIBLE
+        tokenView.bringToFront()
 
-        lifecycleScope.launch {
+        if (update.isSpawn) {
+            // === MANUAL SPAWN ===
+            soundManager.playStarCollect()
+            val targetCoord = LudoBoardConfig.getGlobalCoord(playerIdx, 0)
+            if (targetCoord != null) {
+                moveViewToGrid(tokenView, targetCoord.first, targetCoord.second)
+            }
+            // Use Handler, NOT Coroutine
+            tokenView.postDelayed({ finishTurnSequence(update) }, 450)
+        } else {
+            // === MANUAL MOVE ===
+            val startPos = kotlin.math.max(0, currentPosIndex - update.visualSteps)
+            runMoveLoop(tokenView, playerIdx, startPos, 1, update.visualSteps, update)
+        }
+    }
 
-            // 1. ANIMATE HOP
-            // The AnimationManager handles the path logic.
-            animManager.animateHop(
-                tokenView, playerIdx, startPos, update.visualSteps,
-                cellW, cellH, boardOffsetX, boardOffsetY
-            )
+    // --- RECURSIVE MOVE LOOP ---
+    private fun runMoveLoop(
+        view: View, pIdx: Int, startPos: Int,
+        currentStep: Int, totalSteps: Int,
+        update: LudoViewModel.TurnUpdate
+    ) {
+        if (currentStep > totalSteps) {
+            finishTurnSequence(update)
+            return
+        }
 
-            // 2. PLAY SOUND (Synced after movement)
+        val nextIndex = startPos + currentStep
+        if (nextIndex > 57) {
+            finishTurnSequence(update)
+            return
+        }
+
+        val coord = LudoBoardConfig.getGlobalCoord(pIdx, nextIndex)
+        if (coord != null) {
+            soundManager.playHop() // Sound is back
+
+            val targetX = boardOffsetX + (coord.first.toFloat() + 0.5f) * cellW - (view.width / 2)
+            val targetY = boardOffsetY + (coord.second.toFloat() + 0.5f) * cellH - (view.height / 2)
+
+            view.animate()
+                .x(targetX)
+                .y(targetY)
+                .setDuration(150)
+                .withEndAction {
+                    runMoveLoop(view, pIdx, startPos, currentStep + 1, totalSteps, update)
+                }
+                .start()
+        } else {
+            // Skip invalid step
+            runMoveLoop(view, pIdx, startPos, currentStep + 1, totalSteps, update)
+        }
+    }
+
+    // --- FINISH SEQUENCE (With Manual Kill Animation) ---
+    private fun finishTurnSequence(update: LudoViewModel.TurnUpdate) {
+        // 1. Play Land Sound
+        if (!update.isSpawn) {
             when (update.soundToPlay) {
                 LudoViewModel.SoundType.SAFE -> soundManager.playSafeZone()
                 LudoViewModel.SoundType.WIN -> soundManager.playWin()
-                // Kill sound is handled inside the death animation block below for better sync
-                LudoViewModel.SoundType.NONE -> {
-                    if (update.isSpawn) soundManager.playStarCollect() // Aura/Spawn sound
-                }
                 else -> {}
             }
+        }
 
-            // 3. ANIMATE KILL (If any)
-            if (update.killInfo != null) {
-                val k = update.killInfo
+        // 2. Handle Kill (Manual Animation, No Coroutines)
+        if (update.killInfo != null) {
+            val k = update.killInfo
+            if (k.victimPlayerIdx in 0..3 && k.victimTokenIdx in 0..3) {
                 val victimView = allTokenViews[k.victimPlayerIdx][k.victimTokenIdx]
-                val startCoord = LudoBoardConfig.getGlobalCoord(k.victimPlayerIdx, k.fromPos) ?: Pair(0,0)
                 val basePos = getBaseCoord(k.victimPlayerIdx, k.victimTokenIdx)
 
-                // Play Kill Sound NOW (Synced with slide start)
+                // Calculate pixel target for base
+                val targetX = boardOffsetX + (basePos.first * cellW)
+                val targetY = boardOffsetY + (basePos.second * cellH) - (victimView.width / 2)
+
                 soundManager.playSlideBack()
+                victimView.bringToFront()
 
-                animManager.animateDeathSlide(
-                    victimView, startCoord, basePos,
-                    cellW, cellH, boardOffsetX, boardOffsetY
-                )
+                // Manual Slide Animation
+                victimView.animate()
+                    .x(targetX)
+                    .y(targetY)
+                    .setDuration(500)
+                    .withEndAction { finalizeTurn() }
+                    .start()
+                return // Wait for animation
             }
-
-            // 4. RENDER FINAL STATE (Snap everything to grid)
-            renderBoardState()
-
-            // 5. NOTIFY VIEWMODEL DONE
-            // This triggers the Extra Turn check or Next Player logic
-            delay(200)
-            viewModel.onTurnAnimationsFinished()
         }
+
+        // 3. Finish
+        finalizeTurn()
+    }
+
+    private fun finalizeTurn() {
+        renderBoardState()
+        viewModel.onTurnAnimationsFinished()
     }
 
     private fun renderBoardState() {
         val players = viewModel.players.value ?: return
 
-        // Update Strategy Display
+        // Strategy Bars
         players.forEachIndexed { index, player ->
             var totalSteps = 0
             player.tokenPositions.forEach { pos ->
@@ -338,7 +394,6 @@ class LudoActivity : AppCompatActivity() {
             val token = spawnTokenImage(resId, pos)
             token.setOnClickListener {
                 val activeIdx = viewModel.activePlayerIndex.value ?: -1
-                // Can only click own tokens
                 if (activeIdx == playerIndex) {
                     viewModel.onTokenClicked(tokenIndex)
                 }
