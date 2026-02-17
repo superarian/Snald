@@ -45,7 +45,7 @@ object LudoGameStateHolder {
         players = emptyList()
         activePlayerIndex = 0
         diceValue = 0
-        gameState = LudoViewModel.State.WAITING_FOR_ROLL
+        gameState = LudoViewModel.State.SETUP
         rankCounter = 0
     }
 }

@@ -70,7 +70,6 @@ class LudoActivity : AppCompatActivity() {
         victoryPopText = findViewById(R.id.text_ludo_victory_pop)
         setupLayout = findViewById(R.id.layout_ludo_setup)
 
-        // CRITICAL FIX: Explicitly set board image
         boardImage.setImageResource(R.drawable.ludo_board)
 
         diceViews = mapOf(
@@ -89,16 +88,17 @@ class LudoActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.startGame(3) }
         findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.startGame(4) }
 
-        // MEASURE BOARD THEN SPAWN
         boardImage.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
                 if (boardImage.width > 0) {
                     boardImage.viewTreeObserver.removeOnGlobalLayoutListener(this)
                     calculateBoardMetrics()
-                    // If we restored a game, render it now that metrics exist
+                    // FIX: Re-trigger spawning if players were already loaded
                     viewModel.players.value?.let { players ->
-                        if (allTokenViews[0].isEmpty()) spawnAllTokensInitial(players.size)
-                        renderBoardState()
+                        if (players.isNotEmpty() && allTokenViews[0].isEmpty()) {
+                            spawnAllTokensInitial(players.size)
+                            renderBoardState()
+                        }
                     }
                 }
             }
@@ -122,17 +122,20 @@ class LudoActivity : AppCompatActivity() {
 
         viewModel.players.observe(this) { players ->
             if (players.isNotEmpty()) {
-                // Dynamic UI visibility
                 playerLayouts[3]?.visibility = if (players.size >= 3) View.VISIBLE else View.GONE
                 playerLayouts[4]?.visibility = if (players.size >= 4) View.VISIBLE else View.GONE
                 progressBars[2]?.visibility = if (players.size >= 3) View.VISIBLE else View.GONE
                 progressBars[3]?.visibility = if (players.size >= 4) View.VISIBLE else View.GONE
 
-                // Spawn tokens only when board size (cellW) is determined
+                // FIX: Only spawn if metrics are ready
                 if (cellW > 0 && allTokenViews[0].isEmpty()) {
                     spawnAllTokensInitial(players.size)
                 }
-                renderBoardState()
+
+                // FIX: Only render if tokens were spawned to prevent crash
+                if (allTokenViews[0].isNotEmpty()) {
+                    renderBoardState()
+                }
             }
         }
 
@@ -159,6 +162,7 @@ class LudoActivity : AppCompatActivity() {
     }
 
     private fun playTurnSequence(u: LudoViewModel.TurnUpdate) {
+        if (allTokenViews[0].isEmpty()) return // Safety guard
         val view = allTokenViews[u.playerIdx][u.tokenIdx]
         view.visibility = View.VISIBLE
         view.bringToFront()
@@ -207,6 +211,8 @@ class LudoActivity : AppCompatActivity() {
 
     private fun renderBoardState() {
         val players = viewModel.players.value ?: return
+        if (allTokenViews[0].isEmpty()) return // FIX: Crash prevention
+
         clearBadges()
         val occMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<Int, Int>>>()
 
@@ -260,6 +266,7 @@ class LudoActivity : AppCompatActivity() {
     }
 
     private fun spawnAllTokensInitial(count: Int) {
+        if (cellW <= 0) return // Safety
         tokenOverlay.removeAllViews(); allTokenViews.forEach { it.clear() }
         val res = listOf(R.drawable.red_token, R.drawable.green_token, R.drawable.blue_token, R.drawable.yellow_token)
         for (i in 0 until count) {
@@ -276,8 +283,9 @@ class LudoActivity : AppCompatActivity() {
 
     private fun moveViewToGrid(v: View, c: Int, r: Int) = moveViewToPrecise(v, c + 0.5f, r + 0.5f)
     private fun moveViewToPrecise(v: View, cx: Float, cy: Float) {
-        v.x = boardOffsetX + (cx * cellW) - (v.layoutParams.width / 2)
-        v.y = boardOffsetY + (cy * cellH) - (v.layoutParams.width / 2)
+        val lp = v.layoutParams ?: return
+        v.x = boardOffsetX + (cx * cellW) - (lp.width / 2)
+        v.y = boardOffsetY + (cy * cellH) - (lp.width / 2)
     }
     private fun getBaseCoord(p: Int, t: Int) = when(p) { 0 -> LudoBoardConfig.RED_BASE_PRECISE[t]; 1 -> LudoBoardConfig.GREEN_BASE_PRECISE[t]; 2 -> LudoBoardConfig.BLUE_BASE_PRECISE[t]; else -> LudoBoardConfig.YELLOW_BASE_PRECISE[t] }
     private fun updateDiceImage(v: ImageView, d: Int) = v.setImageResource(when(d) { 1 -> R.drawable.dice_1; 2 -> R.drawable.dice_2; 3 -> R.drawable.dice_3; 4 -> R.drawable.dice_4; 5 -> R.drawable.dice_5; else -> R.drawable.dice_6 })
