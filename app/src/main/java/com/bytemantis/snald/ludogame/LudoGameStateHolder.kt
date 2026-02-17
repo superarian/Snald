@@ -1,24 +1,12 @@
 package com.bytemantis.snald.ludogame
 
-import androidx.lifecycle.MutableLiveData
-
-/**
- * OWNER APPROACH:
- * Singleton to hold Ludo state even if the Activity is destroyed.
- * This ensures the game "Pauses" when hitting Back and "Resumes" when re-opening.
- */
 object LudoGameStateHolder {
     var hasActiveGame: Boolean = false
-    var playerCount: Int = 4
-
-    // Data to persist
     var players: List<LudoPlayer> = emptyList()
     var activePlayerIndex: Int = 0
     var diceValue: Int = 0
-    var gameState: LudoViewModel.State = LudoViewModel.State.WAITING_FOR_ROLL
-    var statusMessage: String = "Welcome Back!"
-
-    // Track rank for victory persistence
+    var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_PLAYERS
+    var statusMessage: String = "Select Players"
     var rankCounter: Int = 0
 
     fun saveState(
@@ -27,16 +15,19 @@ object LudoGameStateHolder {
         _dice: Int,
         _state: LudoViewModel.State,
         _msg: String,
-        _rank: Int,
-        _count: Int
+        _rank: Int
     ) {
         players = _players
         activePlayerIndex = _activeIdx
         diceValue = _dice
-        gameState = _state
+
+        // OWNER FIX: Never save in ANIMATING state.
+        // If the user quits during a move, reset to WAITING_FOR_ROLL to prevent being stuck.
+        gameState = if (_state == LudoViewModel.State.ANIMATING)
+            LudoViewModel.State.WAITING_FOR_ROLL else _state
+
         statusMessage = _msg
         rankCounter = _rank
-        playerCount = _count
         hasActiveGame = true
     }
 
@@ -45,7 +36,8 @@ object LudoGameStateHolder {
         players = emptyList()
         activePlayerIndex = 0
         diceValue = 0
-        gameState = LudoViewModel.State.SETUP
+        gameState = LudoViewModel.State.SETUP_PLAYERS
         rankCounter = 0
+        statusMessage = "Select Players"
     }
 }
