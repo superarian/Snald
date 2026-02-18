@@ -57,7 +57,10 @@ class LudoActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                viewModel.saveCurrentState()
+                val state = viewModel.gameState.value
+                if (state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_TOKENS) {
+                    viewModel.saveCurrentState()
+                }
                 finish()
             }
         })
@@ -76,28 +79,20 @@ class LudoActivity : AppCompatActivity() {
         boardImage.setImageResource(R.drawable.ludo_board)
 
         diceViews = mapOf(
-            1 to findViewById(R.id.dice_p1),
-            2 to findViewById(R.id.dice_p2),
-            3 to findViewById(R.id.dice_p3),
-            4 to findViewById(R.id.dice_p4)
+            1 to findViewById(R.id.dice_p1), 2 to findViewById(R.id.dice_p2),
+            3 to findViewById(R.id.dice_p3), 4 to findViewById(R.id.dice_p4)
         )
-
         playerLayouts = mapOf(
-            3 to findViewById(R.id.layout_ludo_p3),
-            4 to findViewById(R.id.layout_ludo_p4)
+            3 to findViewById(R.id.layout_ludo_p3), 4 to findViewById(R.id.layout_ludo_p4)
         )
-
         progressBars = mapOf(
-            0 to findViewById(R.id.progress_p1),
-            1 to findViewById(R.id.progress_p2),
-            2 to findViewById(R.id.progress_p3),
-            3 to findViewById(R.id.progress_p4)
+            0 to findViewById(R.id.progress_p1), 1 to findViewById(R.id.progress_p2),
+            2 to findViewById(R.id.progress_p3), 3 to findViewById(R.id.progress_p4)
         )
 
         findViewById<Button>(R.id.btn_ludo_2p).setOnClickListener { viewModel.selectPlayerCount(2) }
         findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.selectPlayerCount(3) }
         findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.selectPlayerCount(4) }
-
         findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { viewModel.startGame(1) }
         findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { viewModel.startGame(2) }
         findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { viewModel.startGame(4) }
@@ -106,9 +101,9 @@ class LudoActivity : AppCompatActivity() {
             override fun onGlobalLayout() {
                 if (boardImage.width > 0 && !isUiInitialized) {
                     calculateBoardMetrics()
-                    val players = viewModel.players.value
-                    if (players != null && players.isNotEmpty()) {
-                        spawnAllTokensInitial(players.size)
+                    val currentPlayers = viewModel.players.value
+                    if (currentPlayers != null && currentPlayers.isNotEmpty()) {
+                        spawnAllTokensInitial(currentPlayers.size)
                         isUiInitialized = true
                         renderBoardState()
                     }
@@ -142,7 +137,10 @@ class LudoActivity : AppCompatActivity() {
                     groupTokens.visibility = View.VISIBLE
                     setupTitle.text = "GAME LENGTH"
                 }
-                LudoViewModel.State.GAME_OVER -> showGameOverDialog()
+                LudoViewModel.State.GAME_OVER -> {
+                    setupLayout.visibility = View.GONE
+                    showGameOverDialog()
+                }
                 else -> setupLayout.visibility = View.GONE
             }
         }
@@ -163,7 +161,14 @@ class LudoActivity : AppCompatActivity() {
         }
 
         viewModel.statusMessage.observe(this) { statusText.text = it }
-        viewModel.victoryAnnouncement.observe(this) { if (it != null) showVictoryPopUp(it) }
+
+        viewModel.announcement.observe(this) { ann ->
+            if (ann != null) {
+                showDynamicAnnouncement(ann)
+                viewModel.clearAnnouncement()
+            }
+        }
+
         viewModel.turnUpdate.observe(this) { if (it != null && isUiInitialized) playTurnSequence(it) }
 
         viewModel.diceValue.observe(this) { dice ->
@@ -179,15 +184,43 @@ class LudoActivity : AppCompatActivity() {
             diceViews.forEach { (id, v) ->
                 v.alpha = if (id == idx + 1) 1f else 0.5f
                 v.scaleX = if (id == idx + 1) 1.2f else 1f
+                v.scaleY = if (id == idx + 1) 1.2f else 1f
             }
+        }
+    }
+
+    private fun showDynamicAnnouncement(ann: LudoViewModel.Announcement) {
+        victoryPopText.text = ann.message
+        victoryPopText.visibility = View.VISIBLE
+        victoryPopText.alpha = 0f
+
+        if (ann.type == LudoViewModel.AnnouncementType.PLAYER_VICTORY) {
+            soundManager.playWin()
+            victoryPopText.animate().alpha(1f).scaleX(1.2f).scaleY(1.2f).setDuration(500).withEndAction {
+                lifecycleScope.launch {
+                    delay(3000)
+                    victoryPopText.animate().alpha(0f).scaleX(1f).scaleY(1f).setDuration(500).withEndAction {
+                        victoryPopText.visibility = View.GONE
+                    }.start()
+                }
+            }.start()
+        } else {
+            soundManager.playSafeZone()
+            victoryPopText.animate().alpha(1f).setDuration(300).withEndAction {
+                lifecycleScope.launch {
+                    delay(1200)
+                    victoryPopText.animate().alpha(0f).setDuration(300).withEndAction {
+                        victoryPopText.visibility = View.GONE
+                    }.start()
+                }
+            }.start()
         }
     }
 
     private fun playTurnSequence(u: LudoViewModel.TurnUpdate) {
         if (!isUiInitialized || allTokenViews[u.playerIdx].isEmpty()) return
         val view = allTokenViews[u.playerIdx][u.tokenIdx]
-        view.visibility = View.VISIBLE
-        view.bringToFront()
+        view.visibility = View.VISIBLE; view.bringToFront()
 
         if (u.isSpawn) {
             soundManager.playStarCollect()
@@ -203,18 +236,13 @@ class LudoActivity : AppCompatActivity() {
     }
 
     private fun runMoveLoop(v: View, p: Int, s: Int, step: Int, total: Int, u: LudoViewModel.TurnUpdate) {
-        if (step > total) {
-            finishTurnSequence(u)
-            return
-        }
+        if (step > total) { finishTurnSequence(u); return }
         val coord = LudoBoardConfig.getGlobalCoord(p, s + step)
         if (coord != null) {
             soundManager.playHop()
             val tx = boardOffsetX + (coord.first + 0.5f) * cellW - (v.width / 2)
             val ty = boardOffsetY + (coord.second + 0.5f) * cellH - (v.height / 2)
-            v.animate().x(tx).y(ty).setDuration(150).withEndAction {
-                runMoveLoop(v, p, s, step + 1, total, u)
-            }.start()
+            v.animate().x(tx).y(ty).setDuration(150).withEndAction { runMoveLoop(v, p, s, step + 1, total, u) }.start()
         } else finishTurnSequence(u)
     }
 
@@ -228,13 +256,10 @@ class LudoActivity : AppCompatActivity() {
         if (u.killInfo != null) {
             val victim = allTokenViews[u.killInfo.victimPlayerIdx][u.killInfo.victimTokenIdx]
             val base = getBaseCoord(u.killInfo.victimPlayerIdx, u.killInfo.victimTokenIdx)
-            victim.animate()
-                .x(boardOffsetX + base.first * cellW - victim.width/2)
+            victim.animate().x(boardOffsetX + base.first * cellW - victim.width/2)
                 .y(boardOffsetY + base.second * cellH - victim.height/2)
-                .setDuration(500)
-                .withEndAction {
-                    renderBoardState()
-                    viewModel.onTurnAnimationsFinished()
+                .setDuration(500).withEndAction {
+                    renderBoardState(); viewModel.onTurnAnimationsFinished()
                 }.start()
         } else {
             renderBoardState()
@@ -245,7 +270,6 @@ class LudoActivity : AppCompatActivity() {
     private fun renderBoardState() {
         val players = viewModel.players.value ?: return
         if (!isUiInitialized || allTokenViews[0].isEmpty()) return
-
         clearBadges()
         val occMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<Int, Int>>>()
 
@@ -254,15 +278,13 @@ class LudoActivity : AppCompatActivity() {
             val current = player.tokenPositions.filter { it > -1 }.sumOf { it }
             progressBars[pIdx]?.progress = (current.toDouble() / max * 100).toInt()
 
-            for (tIdx in 0 until player.tokenCount) {
+            for (tIdx in 0 until player.tokenPositions.size) {
                 val pos = player.tokenPositions[tIdx]
                 val v = allTokenViews[pIdx][tIdx]
                 if (pos == -1) {
                     val b = getBaseCoord(pIdx, tIdx)
-                    moveViewToPrecise(v, b.first, b.second)
-                    v.scaleX = 1f; v.scaleY = 1f; v.visibility = View.VISIBLE
-                }
-                else if (pos == 57) v.visibility = View.GONE
+                    moveViewToPrecise(v, b.first, b.second); v.scaleX = 1f; v.scaleY = 1f; v.visibility = View.VISIBLE
+                } else if (pos == 57) v.visibility = View.GONE
                 else {
                     val c = LudoBoardConfig.getGlobalCoord(pIdx, pos)
                     if (c != null) occMap.getOrPut(c) { mutableListOf() }.add(Pair(pIdx, tIdx))
@@ -274,21 +296,17 @@ class LudoActivity : AppCompatActivity() {
             if (tokens.size == 1) {
                 val v = allTokenViews[tokens[0].first][tokens[0].second]
                 v.visibility = View.VISIBLE; v.scaleX = 1f; v.scaleY = 1f; moveViewToGrid(v, c.first, c.second)
-            }
-            else {
+            } else {
                 val p1 = tokens[0].first
                 if (tokens.all { it.first == p1 }) {
                     val v = allTokenViews[p1][tokens[0].second]
-                    v.visibility = View.VISIBLE
-                    moveViewToGrid(v, c.first, c.second)
+                    v.visibility = View.VISIBLE; moveViewToGrid(v, c.first, c.second)
                     for (i in 1 until tokens.size) allTokenViews[tokens[i].first][tokens[i].second].visibility = View.GONE
                     addBadge(v, tokens.size)
                 } else {
                     tokens.forEachIndexed { i, (p, t) ->
-                        val v = allTokenViews[p][t]
-                        v.visibility = View.VISIBLE; v.scaleX = 0.6f; v.scaleY = 0.6f
-                        val ox = if (i % 2 == 0) -0.25f else 0.25f
-                        val oy = if (i < 2) -0.25f else 0.25f
+                        val v = allTokenViews[p][t]; v.visibility = View.VISIBLE; v.scaleX = 0.6f; v.scaleY = 0.6f
+                        val ox = if (i % 2 == 0) -0.25f else 0.25f; val oy = if (i < 2) -0.25f else 0.25f
                         moveViewToPrecise(v, c.first + 0.5f + ox, c.second + 0.5f + oy)
                     }
                 }
@@ -299,22 +317,17 @@ class LudoActivity : AppCompatActivity() {
     private fun calculateBoardMetrics() {
         val d = boardImage.drawable ?: return
         val scale = min(boardImage.width.toFloat() / d.intrinsicWidth, boardImage.height.toFloat() / d.intrinsicHeight)
-        val dw = d.intrinsicWidth * scale
-        val dh = d.intrinsicHeight * scale
-        boardOffsetX = (boardImage.width - dw) / 2
-        boardOffsetY = (boardImage.height - dh) / 2
+        val dw = d.intrinsicWidth * scale; val dh = d.intrinsicHeight * scale
+        boardOffsetX = (boardImage.width - dw) / 2; boardOffsetY = (boardImage.height - dh) / 2
         cellW = dw / 15f; cellH = dh / 15f
     }
 
     private fun spawnAllTokensInitial(playerCount: Int) {
         if (cellW <= 0) return
-        tokenOverlay.removeAllViews()
-        allTokenViews.forEach { it.clear() }
-
+        tokenOverlay.removeAllViews(); allTokenViews.forEach { it.clear() }
         val players = viewModel.players.value ?: return
         val tokensPerPlayer = players[0].tokenCount
         val res = listOf(R.drawable.red_token, R.drawable.green_token, R.drawable.blue_token, R.drawable.yellow_token)
-
         for (i in 0 until playerCount) {
             val base = when(i) {
                 0 -> LudoBoardConfig.RED_BASE_PRECISE
@@ -324,89 +337,54 @@ class LudoActivity : AppCompatActivity() {
             }
             for (tIdx in 0 until tokensPerPlayer) {
                 val t = ImageView(this).apply {
-                    setImageResource(res[i])
-                    layoutParams = FrameLayout.LayoutParams((cellW * 0.8f).toInt(), (cellW * 0.8f).toInt())
+                    setImageResource(res[i]); layoutParams = FrameLayout.LayoutParams((cellW * 0.8f).toInt(), (cellW * 0.8f).toInt())
                     setOnClickListener { if (viewModel.activePlayerIndex.value == i) viewModel.onTokenClicked(tIdx) }
                 }
-                allTokenViews[i].add(t)
-                tokenOverlay.addView(t)
-                moveViewToPrecise(t, base[tIdx].first, base[tIdx].second)
+                allTokenViews[i].add(t); tokenOverlay.addView(t); moveViewToPrecise(t, base[tIdx].first, base[tIdx].second)
             }
         }
     }
 
     private fun moveViewToGrid(v: View, c: Int, r: Int) = moveViewToPrecise(v, c + 0.5f, r + 0.5f)
-
     private fun moveViewToPrecise(v: View, cx: Float, cy: Float) {
         v.x = boardOffsetX + (cx * cellW) - (v.layoutParams.width / 2)
         v.y = boardOffsetY + (cy * cellH) - (v.layoutParams.width / 2)
     }
-
     private fun getBaseCoord(p: Int, t: Int) = when(p) {
         0 -> LudoBoardConfig.RED_BASE_PRECISE[t]
         1 -> LudoBoardConfig.GREEN_BASE_PRECISE[t]
         2 -> LudoBoardConfig.BLUE_BASE_PRECISE[t]
         else -> LudoBoardConfig.YELLOW_BASE_PRECISE[t]
     }
-
     private fun updateDiceImage(v: ImageView, d: Int) = v.setImageResource(when(d) {
-        1 -> R.drawable.dice_1; 2 -> R.drawable.dice_2; 3 -> R.drawable.dice_3;
-        4 -> R.drawable.dice_4; 5 -> R.drawable.dice_5; else -> R.drawable.dice_6
+        1 -> R.drawable.dice_1; 2 -> R.drawable.dice_2; 3 -> R.drawable.dice_3; 4 -> R.drawable.dice_4; 5 -> R.drawable.dice_5; else -> R.drawable.dice_6
     })
-
     private fun addBadge(t: View, c: Int) {
         val b = TextView(this).apply {
-            text = c.toString()
-            setTextColor(Color.WHITE)
-            setBackgroundResource(R.drawable.bg_badge_circle)
-            gravity = Gravity.CENTER
-            textSize = 10f
-            val s = (cellW * 0.4f).toInt()
-            layoutParams = FrameLayout.LayoutParams(s, s)
-            x = t.x + (t.width / 2)
-            y = t.y - (s / 4)
+            text = c.toString(); setTextColor(Color.WHITE); setBackgroundResource(R.drawable.bg_badge_circle); gravity = Gravity.CENTER; textSize = 10f
+            val s = (cellW * 0.4f).toInt(); layoutParams = FrameLayout.LayoutParams(s, s); x = t.x + (t.width / 2); y = t.y - (s / 4)
         }
-        tokenOverlay.addView(b)
-        activeBadges.add(b)
+        tokenOverlay.addView(b); activeBadges.add(b)
     }
-
-    private fun clearBadges() {
-        activeBadges.forEach { tokenOverlay.removeView(it) }
-        activeBadges.clear()
-    }
-
-    private fun showVictoryPopUp(m: String) {
-        soundManager.playWin()
-        victoryPopText.text = m
-        victoryPopText.visibility = View.VISIBLE
-        victoryPopText.alpha = 0f
-        victoryPopText.animate()
-            .alpha(1f)
-            .setDuration(500)
-            .withEndAction {
-                lifecycleScope.launch {
-                    delay(3000)
-                    victoryPopText.animate()
-                        .alpha(0f)
-                        .withEndAction { victoryPopText.visibility = View.GONE }
-                }
-            }
-    }
+    private fun clearBadges() { activeBadges.forEach { tokenOverlay.removeView(it) }; activeBadges.clear() }
 
     private fun showGameOverDialog() {
+        // OWNER FIX: Terminal reset and Exit
         AlertDialog.Builder(this)
             .setTitle("GAME OVER")
-            .setMessage(viewModel.statusMessage.value)
+            .setMessage("All winners have taken their spots!")
             .setCancelable(false)
-            .setPositiveButton("Hub") { _, _ -> viewModel.quitGame(); finish() }
+            .setPositiveButton("EXIT TO HUB") { _, _ ->
+                viewModel.quitGame()
+                finish()
+            }
             .show()
     }
 
     override fun onPause() {
         super.onPause()
         soundManager.pauseMusic()
-        if (viewModel.gameState.value != LudoViewModel.State.SETUP_PLAYERS &&
-            viewModel.gameState.value != LudoViewModel.State.SETUP_TOKENS) {
+        if (viewModel.gameState.value != LudoViewModel.State.SETUP_PLAYERS && viewModel.gameState.value != LudoViewModel.State.SETUP_TOKENS) {
             viewModel.saveCurrentState()
         }
     }

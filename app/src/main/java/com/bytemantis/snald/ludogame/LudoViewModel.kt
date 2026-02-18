@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 class LudoViewModel : ViewModel() {
 
     enum class State { SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
+    enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
+    data class Announcement(val message: String, val type: AnnouncementType)
 
     data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
     enum class SoundType { NONE, SAFE, KILL, WIN }
@@ -33,14 +35,16 @@ class LudoViewModel : ViewModel() {
     private val _turnUpdate = MutableLiveData<TurnUpdate?>()
     val turnUpdate: LiveData<TurnUpdate?> = _turnUpdate
 
-    private val _victoryAnnouncement = MutableLiveData<String?>()
-    val victoryAnnouncement: LiveData<String?> = _victoryAnnouncement
+    // OWNER FIX: Using a Nullable LiveData that we clear after every show
+    private val _announcement = MutableLiveData<Announcement?>()
+    val announcement: LiveData<Announcement?> = _announcement
 
     private val ruleEngine = LudoRuleEngine()
     private var rankCounter = 0
     private var tempPlayerCount = 2
     private var currentTokenCount = 1
-    private var pendingExtraTurn = false
+    private var shouldGiveExtraTurn = false
+    private val finishedPlayerIds = mutableSetOf<Int>()
 
     init {
         if (LudoGameStateHolder.hasActiveGame) restoreGame()
@@ -58,6 +62,7 @@ class LudoViewModel : ViewModel() {
         val newPlayers = (0 until tempPlayerCount).map { LudoPlayer(it + 1, colors[it], currentTokenCount) }
         _players.value = newPlayers
         _activePlayerIndex.value = 0
+        finishedPlayerIds.clear()
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${newPlayers[0].colorName}'s Turn"
         saveCurrentState()
@@ -70,27 +75,32 @@ class LudoViewModel : ViewModel() {
         _gameState.value = LudoGameStateHolder.gameState
         _statusMessage.value = LudoGameStateHolder.statusMessage
         rankCounter = LudoGameStateHolder.rankCounter
+        finishedPlayerIds.clear()
+        finishedPlayerIds.addAll(LudoGameStateHolder.finishedPlayerIds)
         currentTokenCount = _players.value?.firstOrNull()?.tokenCount ?: 4
     }
 
     fun saveCurrentState() {
-        val players = _players.value ?: return
-        LudoGameStateHolder.saveState(players, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter)
+        val p = _players.value ?: return
+        LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds)
     }
 
     fun rollDice() {
         if (_gameState.value != State.WAITING_FOR_ROLL) return
         _gameState.value = State.ANIMATING
-        pendingExtraTurn = false
+        shouldGiveExtraTurn = false
 
         val roll = (1..6).random()
         _diceValue.value = roll
-        if (roll == 6) pendingExtraTurn = true
+
+        // Bonus for rolling a 6
+        if (roll == 6) shouldGiveExtraTurn = true
 
         viewModelScope.launch {
             delay(600)
             val pIdx = _activePlayerIndex.value!!
             val p = _players.value!![pIdx]
+
             val valid = (0 until currentTokenCount).filter {
                 ruleEngine.calculateMove(pIdx, it, p.tokenPositions[it], roll, _players.value!!) !is LudoRuleEngine.MoveResult.Invalid
             }
@@ -102,7 +112,7 @@ class LudoViewModel : ViewModel() {
                     _statusMessage.value = "Select Token"
                 }
             } else {
-                pendingExtraTurn = false
+                shouldGiveExtraTurn = false // Lose bonus if no moves possible
                 delay(800)
                 passTurn()
             }
@@ -119,11 +129,12 @@ class LudoViewModel : ViewModel() {
         if (res is LudoRuleEngine.MoveResult.Invalid) return
         _gameState.value = State.ANIMATING
 
+        // Give extra turn for Kills or Wins (Home)
+        if (res.givesExtraTurn) shouldGiveExtraTurn = true
+
         val isSpawn = p.tokenPositions[tIdx] == -1
         var sound = SoundType.NONE
         var kill: KillInfo? = null
-
-        if (res.givesExtraTurn) pendingExtraTurn = true
 
         when(res) {
             is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions[tIdx] = res.newPosIndex
@@ -140,7 +151,10 @@ class LudoViewModel : ViewModel() {
                 sound = SoundType.WIN
                 if (p.getFinishedCount() == currentTokenCount) {
                     rankCounter++
-                    _victoryAnnouncement.value = "${p.colorName} FINISHED!"
+                    finishedPlayerIds.add(p.id)
+                    _announcement.value = Announcement("${p.colorName} TAKES SPOT #${rankCounter}!", AnnouncementType.PLAYER_VICTORY)
+                } else {
+                    _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL)
                 }
             }
             else -> {}
@@ -148,11 +162,16 @@ class LudoViewModel : ViewModel() {
         _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
     }
 
+    fun clearAnnouncement() { _announcement.value = null }
+
     fun onTurnAnimationsFinished() {
         _turnUpdate.value = null
         val p = _players.value!![_activePlayerIndex.value!!]
 
-        if (pendingExtraTurn && p.getFinishedCount() < currentTokenCount) {
+        // If player just finished their last token, they don't get an extra turn, turn passes
+        if (finishedPlayerIds.contains(p.id)) {
+            passTurn()
+        } else if (shouldGiveExtraTurn) {
             _gameState.value = State.WAITING_FOR_ROLL
             _statusMessage.value = "Extra Turn!"
         } else {
@@ -162,15 +181,25 @@ class LudoViewModel : ViewModel() {
     }
 
     private fun passTurn() {
-        val players = _players.value!!
-        var next = _activePlayerIndex.value!!
-        for(i in 0 until players.size) {
-            next = (next + 1) % players.size
-            if (players[next].getFinishedCount() < currentTokenCount) break
+        val all = _players.value!!
+        val activeCount = all.size - finishedPlayerIds.size
+
+        if (activeCount <= 1) {
+            _gameState.value = State.GAME_OVER
+            _statusMessage.value = "GAME OVER"
+            return
         }
+
+        var next = _activePlayerIndex.value!!
+        var safety = 0
+        do {
+            next = (next + 1) % all.size
+            safety++
+        } while (finishedPlayerIds.contains(all[next].id) && safety < 10)
+
         _activePlayerIndex.value = next
         _gameState.value = State.WAITING_FOR_ROLL
-        _statusMessage.value = "${players[next].colorName}'s Turn"
+        _statusMessage.value = "${all[next].colorName}'s Turn"
         saveCurrentState()
     }
 

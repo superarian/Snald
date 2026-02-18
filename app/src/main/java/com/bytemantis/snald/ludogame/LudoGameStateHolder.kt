@@ -8,6 +8,7 @@ object LudoGameStateHolder {
     var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_PLAYERS
     var statusMessage: String = "Select Players"
     var rankCounter: Int = 0
+    var finishedPlayerIds: MutableSet<Int> = mutableSetOf() // Tracks who is finished
 
     fun saveState(
         _players: List<LudoPlayer>,
@@ -15,19 +16,16 @@ object LudoGameStateHolder {
         _dice: Int,
         _state: LudoViewModel.State,
         _msg: String,
-        _rank: Int
+        _rank: Int,
+        _finished: Set<Int>
     ) {
         players = _players
         activePlayerIndex = _activeIdx
         diceValue = _dice
-
-        // OWNER FIX: Never save in ANIMATING state.
-        // If the user quits during a move, reset to WAITING_FOR_ROLL to prevent being stuck.
-        gameState = if (_state == LudoViewModel.State.ANIMATING)
-            LudoViewModel.State.WAITING_FOR_ROLL else _state
-
+        gameState = if (_state == LudoViewModel.State.ANIMATING) LudoViewModel.State.WAITING_FOR_ROLL else _state
         statusMessage = _msg
         rankCounter = _rank
+        finishedPlayerIds = _finished.toMutableSet()
         hasActiveGame = true
     }
 
@@ -38,6 +36,7 @@ object LudoGameStateHolder {
         diceValue = 0
         gameState = LudoViewModel.State.SETUP_PLAYERS
         rankCounter = 0
+        finishedPlayerIds.clear()
         statusMessage = "Select Players"
     }
 }
