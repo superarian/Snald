@@ -52,9 +52,7 @@ object LudoBoardConfig {
     )
 
     fun getGlobalCoord(playerIndex: Int, stepIndex: Int): Pair<Int, Int>? {
-        // OWNER FIX: Allow index 57 (Center/Home)
-        if (stepIndex == 57) return Pair(7, 7)
-
+        // FIX: The path size is 57 elements (Index 0 to 56). 56 is the true end.
         if (stepIndex < 0 || stepIndex > 56) return null
         val path = when(playerIndex) {
             0 -> PATH_RED
@@ -63,6 +61,6 @@ object LudoBoardConfig {
             else -> PATH_YELLOW
         }
         if (stepIndex >= path.size) return null
-        return path[stepIndex]
+        return path.get(stepIndex)
     }
 }

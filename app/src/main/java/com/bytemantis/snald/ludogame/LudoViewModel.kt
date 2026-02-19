@@ -35,7 +35,6 @@ class LudoViewModel : ViewModel() {
     private val _turnUpdate = MutableLiveData<TurnUpdate?>()
     val turnUpdate: LiveData<TurnUpdate?> = _turnUpdate
 
-    // OWNER FIX: Using a Nullable LiveData that we clear after every show
     private val _announcement = MutableLiveData<Announcement?>()
     val announcement: LiveData<Announcement?> = _announcement
 
@@ -59,12 +58,12 @@ class LudoViewModel : ViewModel() {
     fun startGame(tokenCount: Int) {
         currentTokenCount = tokenCount
         val colors = listOf("RED", "GREEN", "BLUE", "YELLOW")
-        val newPlayers = (0 until tempPlayerCount).map { LudoPlayer(it + 1, colors[it], currentTokenCount) }
+        val newPlayers = (0 until tempPlayerCount).map { LudoPlayer(it + 1, colors.get(it), currentTokenCount) }
         _players.value = newPlayers
         _activePlayerIndex.value = 0
         finishedPlayerIds.clear()
         _gameState.value = State.WAITING_FOR_ROLL
-        _statusMessage.value = "${newPlayers[0].colorName}'s Turn"
+        _statusMessage.value = "${newPlayers.get(0).colorName}'s Turn"
         saveCurrentState()
     }
 
@@ -99,14 +98,14 @@ class LudoViewModel : ViewModel() {
         viewModelScope.launch {
             delay(600)
             val pIdx = _activePlayerIndex.value!!
-            val p = _players.value!![pIdx]
+            val p = _players.value!!.get(pIdx)
 
             val valid = (0 until currentTokenCount).filter {
-                ruleEngine.calculateMove(pIdx, it, p.tokenPositions[it], roll, _players.value!!) !is LudoRuleEngine.MoveResult.Invalid
+                ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!) !is LudoRuleEngine.MoveResult.Invalid
             }
 
             if (valid.isNotEmpty()) {
-                if (valid.size == 1) onTokenClicked(valid[0])
+                if (valid.size == 1) onTokenClicked(valid.get(0))
                 else {
                     _gameState.value = State.WAITING_FOR_MOVE
                     _statusMessage.value = "Select Token"
@@ -122,9 +121,9 @@ class LudoViewModel : ViewModel() {
     fun onTokenClicked(tIdx: Int) {
         if (_gameState.value != State.WAITING_FOR_MOVE && _gameState.value != State.ANIMATING) return
         val pIdx = _activePlayerIndex.value!!
-        val p = _players.value!![pIdx]
+        val p = _players.value!!.get(pIdx)
         val roll = _diceValue.value!!
-        val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions[tIdx], roll, _players.value!!)
+        val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions.get(tIdx), roll, _players.value!!)
 
         if (res is LudoRuleEngine.MoveResult.Invalid) return
         _gameState.value = State.ANIMATING
@@ -132,22 +131,22 @@ class LudoViewModel : ViewModel() {
         // Give extra turn for Kills or Wins (Home)
         if (res.givesExtraTurn) shouldGiveExtraTurn = true
 
-        val isSpawn = p.tokenPositions[tIdx] == -1
+        val isSpawn = p.tokenPositions.get(tIdx) == -1
         var sound = SoundType.NONE
         var kill: KillInfo? = null
 
         when(res) {
-            is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions[tIdx] = res.newPosIndex
-            is LudoRuleEngine.MoveResult.SafeZoneLanded -> { p.tokenPositions[tIdx] = res.newPosIndex; sound = SoundType.SAFE }
-            is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions[tIdx] = res.newPosIndex; sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions.set(tIdx, res.newPosIndex)
+            is LudoRuleEngine.MoveResult.SafeZoneLanded -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
             is LudoRuleEngine.MoveResult.Kill -> {
-                p.tokenPositions[tIdx] = res.newPosIndex
-                _players.value!![res.victimPlayerIdx].tokenPositions[res.victimTokenIdx] = -1
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                _players.value!!.get(res.victimPlayerIdx).tokenPositions.set(res.victimTokenIdx, -1)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
                 sound = SoundType.KILL
             }
             is LudoRuleEngine.MoveResult.Win -> {
-                p.tokenPositions[tIdx] = 57
+                p.tokenPositions.set(tIdx, 56) // FIX: 56 is Home
                 sound = SoundType.WIN
                 if (p.getFinishedCount() == currentTokenCount) {
                     rankCounter++
@@ -166,7 +165,7 @@ class LudoViewModel : ViewModel() {
 
     fun onTurnAnimationsFinished() {
         _turnUpdate.value = null
-        val p = _players.value!![_activePlayerIndex.value!!]
+        val p = _players.value!!.get(_activePlayerIndex.value!!)
 
         // If player just finished their last token, they don't get an extra turn, turn passes
         if (finishedPlayerIds.contains(p.id)) {
@@ -195,11 +194,11 @@ class LudoViewModel : ViewModel() {
         do {
             next = (next + 1) % all.size
             safety++
-        } while (finishedPlayerIds.contains(all[next].id) && safety < 10)
+        } while (finishedPlayerIds.contains(all.get(next).id) && safety < 10)
 
         _activePlayerIndex.value = next
         _gameState.value = State.WAITING_FOR_ROLL
-        _statusMessage.value = "${all[next].colorName}'s Turn"
+        _statusMessage.value = "${all.get(next).colorName}'s Turn"
         saveCurrentState()
     }
 

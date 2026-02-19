@@ -2,10 +2,6 @@ package com.bytemantis.snald.ludogame
 
 class LudoRuleEngine {
 
-    /**
-     * OWNER APPROACH: Scalable Move Result system.
-     * givesExtraTurn is true for Kills, Wins, and 6s (handled in VM).
-     */
     sealed class MoveResult(val givesExtraTurn: Boolean = false) {
         object Invalid : MoveResult()
         data class MoveOnly(val newPosIndex: Int) : MoveResult()
@@ -26,10 +22,10 @@ class LudoRuleEngine {
         diceRoll: Int,
         allPlayers: List<LudoPlayer>
     ): MoveResult {
-        val player = allPlayers[activePlayerIdx]
+        val player = allPlayers.get(activePlayerIdx)
 
-        // Count tokens currently on the active board (0 to 56)
-        val tokensActiveOnBoard = player.tokenPositions.count { it in 0..56 }
+        // Count tokens currently on the active board (0 to 55) - FIX: 56 is WIN
+        val tokensActiveOnBoard = player.tokenPositions.count { it in 0..55 }
 
         // --- 1. SPAWN LOGIC (BASE -> START) ---
         if (currentPos == -1) {
@@ -52,11 +48,11 @@ class LudoRuleEngine {
         // --- 2. MOVEMENT LOGIC ---
         val targetPos = currentPos + diceRoll
 
-        // Overshot the home center
-        if (targetPos > 57) return MoveResult.Invalid
+        // Overshot the home center (FIX: 56 is the exact center/home)
+        if (targetPos > 56) return MoveResult.Invalid
 
-        // Exact 57 is a Win (Home)
-        if (targetPos == 57) return MoveResult.Win(57)
+        // Exact 56 is a Win (Home)
+        if (targetPos == 56) return MoveResult.Win(56)
 
         val targetGlobal = LudoBoardConfig.getGlobalCoord(activePlayerIdx, targetPos)
             ?: return MoveResult.MoveOnly(targetPos)
@@ -91,7 +87,7 @@ class LudoRuleEngine {
             if (enemy.id == (activePIdx + 1)) continue
 
             for (i in enemy.tokenPositions.indices) {
-                val enemyPos = enemy.tokenPositions[i]
+                val enemyPos = enemy.tokenPositions.get(i)
                 if (enemyPos !in 0..50) continue // Only tokens on common path can be killed
 
                 val enemyGlobal = LudoBoardConfig.getGlobalCoord(enemy.id - 1, enemyPos)

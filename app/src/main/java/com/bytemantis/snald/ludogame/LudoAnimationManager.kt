@@ -10,7 +10,6 @@ import kotlinx.coroutines.delay
 
 class LudoAnimationManager(private val soundManager: SoundManager) {
 
-    // OWNER FIX: Faster movement (150ms instead of 200ms)
     private val HOP_DURATION = 150L
     private val SLIDE_SPEED_PPS = 1200f // Faster slide
 
@@ -30,29 +29,24 @@ class LudoAnimationManager(private val soundManager: SoundManager) {
         if (currentPathIndex == -1) {
             val startCoord = LudoBoardConfig.getGlobalCoord(playerIdx, 0) ?: return
 
-            // OWNER FIX: We do NOT play hop sound here, checking Activity will play Aura sound via event
-            // But we keep the visual move
             animateMoveTo(tokenView, startCoord, cellW, cellH, boardOffsetX, boardOffsetY, 300)
             delay(300)
 
             currentPathIndex = 0
 
-            // OWNER FIX: If visual steps (from ViewModel) is 0, we STOP here.
-            // This prevents the glitch where it moves to index 1 then snaps back.
             if (steps == 0) return
         }
 
         // 2. Loop through the steps
         for (i in 1..steps) {
             val nextPathIndex = currentPathIndex + 1
-            if (nextPathIndex > 57) break
+            if (nextPathIndex > 56) break // FIX: Boundary is now 56
 
             val targetCoord = LudoBoardConfig.getGlobalCoord(playerIdx, nextPathIndex) ?: break
 
             animateMoveTo(tokenView, targetCoord, cellW, cellH, boardOffsetX, boardOffsetY, HOP_DURATION)
             soundManager.playHop()
 
-            // Faster delay between hops
             delay(HOP_DURATION + 20)
             currentPathIndex = nextPathIndex
         }
