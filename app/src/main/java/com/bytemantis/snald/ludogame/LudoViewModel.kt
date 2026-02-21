@@ -45,6 +45,9 @@ class LudoViewModel : ViewModel() {
     private var shouldGiveExtraTurn = false
     private val finishedPlayerIds = mutableSetOf<Int>()
 
+    // OWNER FIX: Flag to prevent zombie saves
+    private var isGameAbandoned = false
+
     init {
         if (LudoGameStateHolder.hasActiveGame) restoreGame()
         else _gameState.value = State.SETUP_THEME
@@ -66,6 +69,7 @@ class LudoViewModel : ViewModel() {
         _players.value = newPlayers
         _activePlayerIndex.value = 0
         finishedPlayerIds.clear()
+        isGameAbandoned = false // Reset the flag when starting a new game
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${newPlayers.get(0).colorName}'s Turn"
         saveCurrentState()
@@ -81,9 +85,13 @@ class LudoViewModel : ViewModel() {
         finishedPlayerIds.clear()
         finishedPlayerIds.addAll(LudoGameStateHolder.finishedPlayerIds)
         currentTokenCount = _players.value?.firstOrNull()?.tokenCount ?: 4
+        isGameAbandoned = false
     }
 
     fun saveCurrentState() {
+        // OWNER FIX: Prevent 'onPause' from re-saving a game we just destroyed
+        if (isGameAbandoned) return
+
         val p = _players.value ?: return
         LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds)
     }
@@ -206,5 +214,8 @@ class LudoViewModel : ViewModel() {
         saveCurrentState()
     }
 
-    fun quitGame() { LudoGameStateHolder.clear() }
+    fun quitGame() {
+        isGameAbandoned = true // Flag the game as dead
+        LudoGameStateHolder.clear()
+    }
 }

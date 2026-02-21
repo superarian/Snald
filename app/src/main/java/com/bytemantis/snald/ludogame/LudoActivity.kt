@@ -62,16 +62,35 @@ class LudoActivity : AppCompatActivity() {
         setupUI()
         setupObservers()
 
+        // OWNER FIX: Updated Back Button Logic
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                if (state != LudoViewModel.State.SETUP_THEME &&
-                    state != LudoViewModel.State.SETUP_PLAYERS &&
-                    state != LudoViewModel.State.SETUP_TOKENS &&
-                    state != LudoViewModel.State.GAME_OVER) {
-                    viewModel.saveCurrentState()
+
+                if (state == LudoViewModel.State.SETUP_THEME ||
+                    state == LudoViewModel.State.SETUP_PLAYERS ||
+                    state == LudoViewModel.State.SETUP_TOKENS) {
+                    // Just back out if we are still setting up
+                    finish()
+                } else if (state == LudoViewModel.State.GAME_OVER) {
+                    viewModel.quitGame()
+                    finish()
+                } else {
+                    // OWNER FIX: Game is active, give the user the choice!
+                    AlertDialog.Builder(this@LudoActivity)
+                        .setTitle("Leave Match")
+                        .setMessage("Do you want to save your progress or quit the match completely?")
+                        .setPositiveButton("Save & Exit") { _, _ ->
+                            viewModel.saveCurrentState()
+                            finish()
+                        }
+                        .setNegativeButton("Quit Match") { _, _ ->
+                            viewModel.quitGame() // This triggers our new safety flag
+                            finish()
+                        }
+                        .setNeutralButton("Cancel", null)
+                        .show()
                 }
-                finish()
             }
         })
     }
@@ -438,6 +457,8 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         val state = viewModel.gameState.value
+        // We still call saveCurrentState here just in case the app is backgrounded,
+        // but the new isGameAbandoned flag in the ViewModel will protect us if we are quitting.
         if (state != LudoViewModel.State.SETUP_THEME &&
             state != LudoViewModel.State.SETUP_PLAYERS &&
             state != LudoViewModel.State.SETUP_TOKENS &&
