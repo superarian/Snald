@@ -12,6 +12,7 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.airbnb.lottie.LottieAnimationView
 import com.bytemantis.snald.R
 import com.bytemantis.snald.core.SoundManager
 import kotlinx.coroutines.delay
@@ -24,6 +25,7 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var soundManager: SoundManager
 
     private lateinit var boardImage: ImageView
+    private lateinit var neonOverlay: LottieAnimationView // NEW
     private lateinit var statusText: TextView
     private lateinit var tokenOverlay: FrameLayout
     private lateinit var victoryPopText: TextView
@@ -63,7 +65,6 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                // FIX: Do not save if the game is already over or in setup
                 if (state != LudoViewModel.State.SETUP_THEME &&
                     state != LudoViewModel.State.SETUP_PLAYERS &&
                     state != LudoViewModel.State.SETUP_TOKENS &&
@@ -77,6 +78,7 @@ class LudoActivity : AppCompatActivity() {
 
     private fun setupUI() {
         boardImage = findViewById(R.id.img_ludo_board)
+        neonOverlay = findViewById(R.id.anim_ludo_neon_overlay) // NEW
         statusText = findViewById(R.id.text_ludo_status)
         tokenOverlay = findViewById(R.id.overlay_ludo_tokens)
         victoryPopText = findViewById(R.id.text_ludo_victory_pop)
@@ -86,10 +88,18 @@ class LudoActivity : AppCompatActivity() {
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
 
-        // Load Persistent Theme
+        // Load Persistent Theme & apply Lottie states
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
         boardImage.setImageResource(savedTheme)
+
+        if (savedTheme == R.drawable.ludo_board_neon) {
+            neonOverlay.visibility = View.VISIBLE
+            neonOverlay.playAnimation()
+        } else {
+            neonOverlay.visibility = View.GONE
+            neonOverlay.cancelAnimation()
+        }
 
         diceViews = mapOf(
             1 to findViewById(R.id.dice_p1), 2 to findViewById(R.id.dice_p2),
@@ -144,6 +154,16 @@ class LudoActivity : AppCompatActivity() {
     private fun applyAndSaveTheme(themeResId: Int) {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_THEME, themeResId).apply()
         boardImage.setImageResource(themeResId)
+
+        // Handle Neon Animation overlay
+        if (themeResId == R.drawable.ludo_board_neon) {
+            neonOverlay.visibility = View.VISIBLE
+            neonOverlay.playAnimation()
+        } else {
+            neonOverlay.visibility = View.GONE
+            neonOverlay.cancelAnimation()
+        }
+
         viewModel.selectTheme()
     }
 
@@ -308,7 +328,7 @@ class LudoActivity : AppCompatActivity() {
         val occMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<Int, Int>>>()
 
         players.forEachIndexed { pIdx, player ->
-            val max = player.tokenCount * 56 // FIX: Progress maps to 56 now
+            val max = player.tokenCount * 56
             val current = player.tokenPositions.filter { it > -1 }.sumOf { it }
             progressBars.get(pIdx)?.progress = (current.toDouble() / max * 100).toInt()
 
@@ -318,7 +338,7 @@ class LudoActivity : AppCompatActivity() {
                 if (pos == -1) {
                     val b = getBaseCoord(pIdx, tIdx)
                     moveViewToPrecise(v, b.first, b.second); v.scaleX = 1f; v.scaleY = 1f; v.visibility = View.VISIBLE
-                } else if (pos == 56) v.visibility = View.GONE // FIX: Hide at 56
+                } else if (pos == 56) v.visibility = View.GONE
                 else {
                     val c = LudoBoardConfig.getGlobalCoord(pIdx, pos)
                     if (c != null) occMap.getOrPut(c) { mutableListOf() }.add(Pair(pIdx, tIdx))
@@ -418,7 +438,6 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         val state = viewModel.gameState.value
-        // FIX: Do not save state if game is over or in setup
         if (state != LudoViewModel.State.SETUP_THEME &&
             state != LudoViewModel.State.SETUP_PLAYERS &&
             state != LudoViewModel.State.SETUP_TOKENS &&
