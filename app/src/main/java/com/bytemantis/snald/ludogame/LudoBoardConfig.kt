@@ -3,11 +3,35 @@ package com.bytemantis.snald.ludogame
 object LudoBoardConfig {
     const val GRID_SIZE = 15
 
-    // --- BASE COORDINATES (Safe Havens) ---
-    val RED_BASE_PRECISE = listOf(Pair(1.5f, 1.5f), Pair(3.5f, 1.5f), Pair(1.5f, 3.5f), Pair(3.5f, 3.5f))
-    val GREEN_BASE_PRECISE = listOf(Pair(10.5f, 1.5f), Pair(12.5f, 1.5f), Pair(10.5f, 3.5f), Pair(12.5f, 3.5f))
-    val YELLOW_BASE_PRECISE = listOf(Pair(1.5f, 10.5f), Pair(3.5f, 10.5f), Pair(1.5f, 12.5f), Pair(3.5f, 12.5f))
-    val BLUE_BASE_PRECISE = listOf(Pair(10.5f, 10.5f), Pair(12.5f, 10.5f), Pair(10.5f, 12.5f), Pair(12.5f, 12.5f))
+    // ==========================================
+    // OWNER FIX: Dynamic Token Spread System
+    // Change this one number to push tokens closer together or further apart.
+    // 1.35f is mathematically ideal for a standard 15x15 board graphic.
+    const val TOKEN_SPREAD = 0.75f
+    // ==========================================
+
+    // The exact visual centers of the 6x6 bases on a 15x15 grid
+    private val CENTER_RED = Pair(3.0f, 3.0f)     // Top Left
+    private val CENTER_GREEN = Pair(12.0f, 3.0f)  // Top Right
+    private val CENTER_BLUE = Pair(12.0f, 12.0f)  // Bottom Right
+    private val CENTER_YELLOW = Pair(3.0f, 12.0f) // Bottom Left
+
+    fun getBasePreciseCoord(playerIndex: Int, tokenIndex: Int): Pair<Float, Float> {
+        val center = when (playerIndex) {
+            0 -> CENTER_RED
+            1 -> CENTER_GREEN
+            2 -> CENTER_BLUE
+            else -> CENTER_YELLOW
+        }
+
+        // Project the 4 tokens evenly around the exact center of the base
+        return when (tokenIndex) {
+            0 -> Pair(center.first - TOKEN_SPREAD, center.second - TOKEN_SPREAD) // Top Left
+            1 -> Pair(center.first + TOKEN_SPREAD, center.second - TOKEN_SPREAD) // Top Right
+            2 -> Pair(center.first - TOKEN_SPREAD, center.second + TOKEN_SPREAD) // Bottom Left
+            else -> Pair(center.first + TOKEN_SPREAD, center.second + TOKEN_SPREAD) // Bottom Right
+        }
+    }
 
     // --- GLOBAL SAFE ZONES ---
     val SAFE_ZONES = setOf(
@@ -52,7 +76,6 @@ object LudoBoardConfig {
     )
 
     fun getGlobalCoord(playerIndex: Int, stepIndex: Int): Pair<Int, Int>? {
-        // FIX: The path size is 57 elements (Index 0 to 56). 56 is the true end.
         if (stepIndex < 0 || stepIndex > 56) return null
         val path = when(playerIndex) {
             0 -> PATH_RED

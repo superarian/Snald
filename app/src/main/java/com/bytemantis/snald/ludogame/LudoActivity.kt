@@ -25,7 +25,7 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var soundManager: SoundManager
 
     private lateinit var boardImage: ImageView
-    private lateinit var neonOverlay: LottieAnimationView // NEW
+    private lateinit var neonOverlay: LottieAnimationView
     private lateinit var statusText: TextView
     private lateinit var tokenOverlay: FrameLayout
     private lateinit var victoryPopText: TextView
@@ -62,7 +62,6 @@ class LudoActivity : AppCompatActivity() {
         setupUI()
         setupObservers()
 
-        // OWNER FIX: Updated Back Button Logic
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
@@ -70,13 +69,11 @@ class LudoActivity : AppCompatActivity() {
                 if (state == LudoViewModel.State.SETUP_THEME ||
                     state == LudoViewModel.State.SETUP_PLAYERS ||
                     state == LudoViewModel.State.SETUP_TOKENS) {
-                    // Just back out if we are still setting up
                     finish()
                 } else if (state == LudoViewModel.State.GAME_OVER) {
                     viewModel.quitGame()
                     finish()
                 } else {
-                    // OWNER FIX: Game is active, give the user the choice!
                     AlertDialog.Builder(this@LudoActivity)
                         .setTitle("Leave Match")
                         .setMessage("Do you want to save your progress or quit the match completely?")
@@ -85,7 +82,7 @@ class LudoActivity : AppCompatActivity() {
                             finish()
                         }
                         .setNegativeButton("Quit Match") { _, _ ->
-                            viewModel.quitGame() // This triggers our new safety flag
+                            viewModel.quitGame()
                             finish()
                         }
                         .setNeutralButton("Cancel", null)
@@ -97,7 +94,7 @@ class LudoActivity : AppCompatActivity() {
 
     private fun setupUI() {
         boardImage = findViewById(R.id.img_ludo_board)
-        neonOverlay = findViewById(R.id.anim_ludo_neon_overlay) // NEW
+        neonOverlay = findViewById(R.id.anim_ludo_neon_overlay)
         statusText = findViewById(R.id.text_ludo_status)
         tokenOverlay = findViewById(R.id.overlay_ludo_tokens)
         victoryPopText = findViewById(R.id.text_ludo_victory_pop)
@@ -107,7 +104,6 @@ class LudoActivity : AppCompatActivity() {
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
 
-        // Load Persistent Theme & apply Lottie states
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
         boardImage.setImageResource(savedTheme)
@@ -132,12 +128,10 @@ class LudoActivity : AppCompatActivity() {
             2 to findViewById(R.id.progress_p3), 3 to findViewById(R.id.progress_p4)
         )
 
-        // Theme Setup Listeners
         findViewById<Button>(R.id.btn_theme_classic).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board) }
         findViewById<Button>(R.id.btn_theme_wood).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_wood) }
         findViewById<Button>(R.id.btn_theme_neon).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_neon) }
 
-        // Existing Setup Listeners
         findViewById<Button>(R.id.btn_ludo_2p).setOnClickListener { viewModel.selectPlayerCount(2) }
         findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.selectPlayerCount(3) }
         findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.selectPlayerCount(4) }
@@ -174,7 +168,6 @@ class LudoActivity : AppCompatActivity() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_THEME, themeResId).apply()
         boardImage.setImageResource(themeResId)
 
-        // Handle Neon Animation overlay
         if (themeResId == R.drawable.ludo_board_neon) {
             neonOverlay.visibility = View.VISIBLE
             neonOverlay.playAnimation()
@@ -402,18 +395,16 @@ class LudoActivity : AppCompatActivity() {
         val tokensPerPlayer = players.get(0).tokenCount
         val res = listOf(R.drawable.red_token, R.drawable.green_token, R.drawable.blue_token, R.drawable.yellow_token)
         for (i in 0 until playerCount) {
-            val base = when(i) {
-                0 -> LudoBoardConfig.RED_BASE_PRECISE
-                1 -> LudoBoardConfig.GREEN_BASE_PRECISE
-                2 -> LudoBoardConfig.BLUE_BASE_PRECISE
-                else -> LudoBoardConfig.YELLOW_BASE_PRECISE
-            }
             for (tIdx in 0 until tokensPerPlayer) {
                 val t = ImageView(this).apply {
                     setImageResource(res.get(i)); layoutParams = FrameLayout.LayoutParams((cellW * 0.8f).toInt(), (cellW * 0.8f).toInt())
                     setOnClickListener { if (viewModel.activePlayerIndex.value == i) viewModel.onTokenClicked(tIdx) }
                 }
-                allTokenViews.get(i).add(t); tokenOverlay.addView(t); moveViewToPrecise(t, base.get(tIdx).first, base.get(tIdx).second)
+                allTokenViews.get(i).add(t); tokenOverlay.addView(t)
+
+                // OWNER FIX: Ask the config file for the dynamic coordinate based on the spread system
+                val baseCoord = LudoBoardConfig.getBasePreciseCoord(i, tIdx)
+                moveViewToPrecise(t, baseCoord.first, baseCoord.second)
             }
         }
     }
@@ -423,15 +414,14 @@ class LudoActivity : AppCompatActivity() {
         v.x = boardOffsetX + (cx * cellW) - (v.layoutParams.width / 2)
         v.y = boardOffsetY + (cy * cellH) - (v.layoutParams.width / 2)
     }
-    private fun getBaseCoord(p: Int, t: Int) = when(p) {
-        0 -> LudoBoardConfig.RED_BASE_PRECISE.get(t)
-        1 -> LudoBoardConfig.GREEN_BASE_PRECISE.get(t)
-        2 -> LudoBoardConfig.BLUE_BASE_PRECISE.get(t)
-        else -> LudoBoardConfig.YELLOW_BASE_PRECISE.get(t)
-    }
+
+    // OWNER FIX: Reroutes to the new Config Helper
+    private fun getBaseCoord(p: Int, t: Int) = LudoBoardConfig.getBasePreciseCoord(p, t)
+
     private fun updateDiceImage(v: ImageView, d: Int) = v.setImageResource(when(d) {
         1 -> R.drawable.dice_1; 2 -> R.drawable.dice_2; 3 -> R.drawable.dice_3; 4 -> R.drawable.dice_4; 5 -> R.drawable.dice_5; else -> R.drawable.dice_6
     })
+
     private fun addBadge(t: View, c: Int) {
         val b = TextView(this).apply {
             text = c.toString(); setTextColor(Color.WHITE); setBackgroundResource(R.drawable.bg_badge_circle); gravity = Gravity.CENTER; textSize = 10f
@@ -439,6 +429,7 @@ class LudoActivity : AppCompatActivity() {
         }
         tokenOverlay.addView(b); activeBadges.add(b)
     }
+
     private fun clearBadges() { activeBadges.forEach { tokenOverlay.removeView(it) }; activeBadges.clear() }
 
     private fun showGameOverDialog() {
@@ -457,8 +448,6 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         val state = viewModel.gameState.value
-        // We still call saveCurrentState here just in case the app is backgrounded,
-        // but the new isGameAbandoned flag in the ViewModel will protect us if we are quitting.
         if (state != LudoViewModel.State.SETUP_THEME &&
             state != LudoViewModel.State.SETUP_PLAYERS &&
             state != LudoViewModel.State.SETUP_TOKENS &&
