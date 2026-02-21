@@ -6,7 +6,6 @@
     android:layout_height="match_parent"
     android:background="#8D6E63">
 
-    <!-- LUDO BOARD -->
     <ImageView
         android:id="@+id/img_ludo_board"
         android:layout_width="0dp"
@@ -28,7 +27,6 @@
         app:layout_constraintStart_toStartOf="@id/img_ludo_board"
         app:layout_constraintEnd_toEndOf="@id/img_ludo_board" />
 
-    <!-- PLAYER UI SLOTS -->
     <LinearLayout
         android:id="@+id/layout_ludo_p1"
         android:layout_width="wrap_content"
@@ -79,7 +77,6 @@
         <ImageView android:id="@+id/dice_p3" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
     </LinearLayout>
 
-    <!-- STRATEGY CENTER -->
     <LinearLayout
         android:id="@+id/layout_strategy_bar"
         android:layout_width="0dp"
@@ -127,7 +124,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- DYNAMIC SETUP OVERLAY -->
     <LinearLayout
         android:id="@+id/layout_ludo_setup"
         android:layout_width="match_parent"
@@ -148,7 +144,18 @@
             android:textStyle="bold"
             android:layout_marginBottom="50dp"/>
 
-        <!-- STAGE 1: PLAYER COUNT -->
+        <LinearLayout
+            android:id="@+id/group_setup_theme"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone">
+            <Button android:id="@+id/btn_theme_classic" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="CLASSIC BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+            <Button android:id="@+id/btn_theme_wood" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="WOODEN BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+            <Button android:id="@+id/btn_theme_neon" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="NEON BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/group_setup_players"
             android:layout_width="wrap_content"
@@ -160,7 +167,6 @@
             <Button android:id="@+id/btn_ludo_4p" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
         </LinearLayout>
 
-        <!-- STAGE 2: TOKEN COUNT -->
         <LinearLayout
             android:id="@+id/group_setup_tokens"
             android:layout_width="wrap_content"

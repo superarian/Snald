@@ -1,5 +1,6 @@
 package com.bytemantis.snald.ludogame
 
+import android.content.Context
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -28,6 +29,7 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var victoryPopText: TextView
     private lateinit var setupLayout: LinearLayout
     private lateinit var setupTitle: TextView
+    private lateinit var groupTheme: LinearLayout
     private lateinit var groupPlayers: LinearLayout
     private lateinit var groupTokens: LinearLayout
 
@@ -44,6 +46,9 @@ class LudoActivity : AppCompatActivity() {
     private var boardOffsetY = 0f
     private var isUiInitialized = false
 
+    private val PREFS_NAME = "LudoPrefs"
+    private val KEY_THEME = "SelectedTheme"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_ludo)
@@ -58,8 +63,9 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                // FIX: Do not save if the game is already over
-                if (state != LudoViewModel.State.SETUP_PLAYERS &&
+                // FIX: Do not save if the game is already over or in setup
+                if (state != LudoViewModel.State.SETUP_THEME &&
+                    state != LudoViewModel.State.SETUP_PLAYERS &&
                     state != LudoViewModel.State.SETUP_TOKENS &&
                     state != LudoViewModel.State.GAME_OVER) {
                     viewModel.saveCurrentState()
@@ -76,10 +82,14 @@ class LudoActivity : AppCompatActivity() {
         victoryPopText = findViewById(R.id.text_ludo_victory_pop)
         setupLayout = findViewById(R.id.layout_ludo_setup)
         setupTitle = findViewById(R.id.text_setup_title)
+        groupTheme = findViewById(R.id.group_setup_theme)
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
 
-        boardImage.setImageResource(R.drawable.ludo_board)
+        // Load Persistent Theme
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
+        boardImage.setImageResource(savedTheme)
 
         diceViews = mapOf(
             1 to findViewById(R.id.dice_p1), 2 to findViewById(R.id.dice_p2),
@@ -93,6 +103,12 @@ class LudoActivity : AppCompatActivity() {
             2 to findViewById(R.id.progress_p3), 3 to findViewById(R.id.progress_p4)
         )
 
+        // Theme Setup Listeners
+        findViewById<Button>(R.id.btn_theme_classic).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board) }
+        findViewById<Button>(R.id.btn_theme_wood).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_wood) }
+        findViewById<Button>(R.id.btn_theme_neon).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_neon) }
+
+        // Existing Setup Listeners
         findViewById<Button>(R.id.btn_ludo_2p).setOnClickListener { viewModel.selectPlayerCount(2) }
         findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.selectPlayerCount(3) }
         findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.selectPlayerCount(4) }
@@ -125,17 +141,32 @@ class LudoActivity : AppCompatActivity() {
         }
     }
 
+    private fun applyAndSaveTheme(themeResId: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_THEME, themeResId).apply()
+        boardImage.setImageResource(themeResId)
+        viewModel.selectTheme()
+    }
+
     private fun setupObservers() {
         viewModel.gameState.observe(this) { state ->
             when(state) {
+                LudoViewModel.State.SETUP_THEME -> {
+                    setupLayout.visibility = View.VISIBLE
+                    groupTheme.visibility = View.VISIBLE
+                    groupPlayers.visibility = View.GONE
+                    groupTokens.visibility = View.GONE
+                    setupTitle.text = "SELECT BOARD"
+                }
                 LudoViewModel.State.SETUP_PLAYERS -> {
                     setupLayout.visibility = View.VISIBLE
+                    groupTheme.visibility = View.GONE
                     groupPlayers.visibility = View.VISIBLE
                     groupTokens.visibility = View.GONE
                     setupTitle.text = "LUDO MATCH"
                 }
                 LudoViewModel.State.SETUP_TOKENS -> {
                     setupLayout.visibility = View.VISIBLE
+                    groupTheme.visibility = View.GONE
                     groupPlayers.visibility = View.GONE
                     groupTokens.visibility = View.VISIBLE
                     setupTitle.text = "GAME LENGTH"
@@ -387,8 +418,9 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         val state = viewModel.gameState.value
-        // FIX: Do not save state if game is over
-        if (state != LudoViewModel.State.SETUP_PLAYERS &&
+        // FIX: Do not save state if game is over or in setup
+        if (state != LudoViewModel.State.SETUP_THEME &&
+            state != LudoViewModel.State.SETUP_PLAYERS &&
             state != LudoViewModel.State.SETUP_TOKENS &&
             state != LudoViewModel.State.GAME_OVER) {
             viewModel.saveCurrentState()

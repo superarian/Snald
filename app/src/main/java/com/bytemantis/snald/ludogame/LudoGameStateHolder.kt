@@ -5,8 +5,8 @@ object LudoGameStateHolder {
     var players: List<LudoPlayer> = emptyList()
     var activePlayerIndex: Int = 0
     var diceValue: Int = 0
-    var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_PLAYERS
-    var statusMessage: String = "Select Players"
+    var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_THEME
+    var statusMessage: String = "Select Board"
     var rankCounter: Int = 0
     var finishedPlayerIds: MutableSet<Int> = mutableSetOf() // Tracks who is finished
 
@@ -34,9 +34,9 @@ object LudoGameStateHolder {
         players = emptyList()
         activePlayerIndex = 0
         diceValue = 0
-        gameState = LudoViewModel.State.SETUP_PLAYERS
+        gameState = LudoViewModel.State.SETUP_THEME
         rankCounter = 0
         finishedPlayerIds.clear()
-        statusMessage = "Select Players"
+        statusMessage = "Select Board"
     }
 }

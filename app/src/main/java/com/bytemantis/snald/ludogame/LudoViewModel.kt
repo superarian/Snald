@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
 
 class LudoViewModel : ViewModel() {
 
-    enum class State { SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
+    enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
     data class Announcement(val message: String, val type: AnnouncementType)
 
@@ -47,7 +47,11 @@ class LudoViewModel : ViewModel() {
 
     init {
         if (LudoGameStateHolder.hasActiveGame) restoreGame()
-        else _gameState.value = State.SETUP_PLAYERS
+        else _gameState.value = State.SETUP_THEME
+    }
+
+    fun selectTheme() {
+        _gameState.value = State.SETUP_PLAYERS
     }
 
     fun selectPlayerCount(count: Int) {
