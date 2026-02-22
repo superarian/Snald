@@ -358,23 +358,59 @@ class LudoActivity : AppCompatActivity() {
             }
         }
 
+        // OWNER FIX: Group by Color to prevent Traffic Jams on Safe Zones
         occMap.forEach { (c, tokens) ->
-            if (tokens.size == 1) {
-                val v = allTokenViews.get(tokens.get(0).first).get(tokens.get(0).second)
-                v.visibility = View.VISIBLE; v.scaleX = 1f; v.scaleY = 1f; moveViewToGrid(v, c.first, c.second)
+            // Group the tokens on this square by their Player ID (color)
+            val groupedByPlayer = tokens.groupBy { it.first }
+
+            if (groupedByPlayer.size == 1) {
+                // Scenario A: Only ONE color is sitting on this square
+                val playerTokens = groupedByPlayer.values.first()
+                val mainToken = allTokenViews[playerTokens[0].first][playerTokens[0].second]
+
+                // Show the first token, centered and full size
+                mainToken.visibility = View.VISIBLE
+                mainToken.scaleX = 1f
+                mainToken.scaleY = 1f
+                moveViewToGrid(mainToken, c.first, c.second)
+
+                // Hide all the duplicates
+                for (i in 1 until playerTokens.size) {
+                    allTokenViews[playerTokens[i].first][playerTokens[i].second].visibility = View.GONE
+                }
+
+                // Apply a badge if there are stacked tokens
+                if (playerTokens.size > 1) {
+                    addBadge(mainToken, playerTokens.size)
+                }
+
             } else {
-                val p1 = tokens.get(0).first
-                if (tokens.all { it.first == p1 }) {
-                    val v = allTokenViews.get(p1).get(tokens.get(0).second)
-                    v.visibility = View.VISIBLE; moveViewToGrid(v, c.first, c.second)
-                    for (i in 1 until tokens.size) allTokenViews.get(tokens.get(i).first).get(tokens.get(i).second).visibility = View.GONE
-                    addBadge(v, tokens.size)
-                } else {
-                    tokens.forEachIndexed { i, (p, t) ->
-                        val v = allTokenViews.get(p).get(t); v.visibility = View.VISIBLE; v.scaleX = 0.6f; v.scaleY = 0.6f
-                        val ox = if (i % 2 == 0) -0.25f else 0.25f; val oy = if (i < 2) -0.25f else 0.25f
-                        moveViewToPrecise(v, c.first + 0.5f + ox, c.second + 0.5f + oy)
+                // Scenario B: MULTIPLE colors on this square (Safe Zone Traffic Jam)
+                var colorIndex = 0
+                groupedByPlayer.forEach { (playerId, playerTokens) ->
+                    val mainToken = allTokenViews[playerId][playerTokens[0].second]
+
+                    // Show the first token of this color, miniaturized
+                    mainToken.visibility = View.VISIBLE
+                    mainToken.scaleX = 0.6f
+                    mainToken.scaleY = 0.6f
+
+                    // Assign to a specific corner based on how many colors are here
+                    val ox = if (colorIndex % 2 == 0) -0.25f else 0.25f
+                    val oy = if (colorIndex < 2) -0.25f else 0.25f
+                    moveViewToPrecise(mainToken, c.first + 0.5f + ox, c.second + 0.5f + oy)
+
+                    // Hide the duplicate tokens for this specific color
+                    for (i in 1 until playerTokens.size) {
+                        allTokenViews[playerId][playerTokens[i].second].visibility = View.GONE
                     }
+
+                    // Apply a badge to this mini-token if this color has multiples
+                    if (playerTokens.size > 1) {
+                        addBadge(mainToken, playerTokens.size)
+                    }
+
+                    colorIndex++
                 }
             }
         }
@@ -401,8 +437,6 @@ class LudoActivity : AppCompatActivity() {
                     setOnClickListener { if (viewModel.activePlayerIndex.value == i) viewModel.onTokenClicked(tIdx) }
                 }
                 allTokenViews.get(i).add(t); tokenOverlay.addView(t)
-
-                // OWNER FIX: Ask the config file for the dynamic coordinate based on the spread system
                 val baseCoord = LudoBoardConfig.getBasePreciseCoord(i, tIdx)
                 moveViewToPrecise(t, baseCoord.first, baseCoord.second)
             }
@@ -415,7 +449,6 @@ class LudoActivity : AppCompatActivity() {
         v.y = boardOffsetY + (cy * cellH) - (v.layoutParams.width / 2)
     }
 
-    // OWNER FIX: Reroutes to the new Config Helper
     private fun getBaseCoord(p: Int, t: Int) = LudoBoardConfig.getBasePreciseCoord(p, t)
 
     private fun updateDiceImage(v: ImageView, d: Int) = v.setImageResource(when(d) {
