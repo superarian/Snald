@@ -4,6 +4,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -12,7 +13,6 @@ class LudoViewModel : ViewModel() {
     enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
     data class Announcement(val message: String, val type: AnnouncementType)
-
     data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
     enum class SoundType { NONE, SAFE, KILL, WIN }
     data class KillInfo(val victimPlayerIdx: Int, val victimTokenIdx: Int, val fromPos: Int)
@@ -38,29 +38,67 @@ class LudoViewModel : ViewModel() {
     private val _announcement = MutableLiveData<Announcement?>()
     val announcement: LiveData<Announcement?> = _announcement
 
+    private val _timerSeconds = MutableLiveData<Int>(30)
+    val timerSeconds: LiveData<Int> = _timerSeconds
+
+    // OWNER FIX: Single nullable coordinate for the dynamic star
+    private val _dynamicSafeZone = MutableLiveData<Pair<Int, Int>?>(null)
+    val dynamicSafeZone: LiveData<Pair<Int, Int>?> = _dynamicSafeZone
+
+    // OWNER FIX: Lightweight trigger to update text without redrawing board
+    private val _statsUpdate = MutableLiveData<Unit>()
+    val statsUpdate: LiveData<Unit> = _statsUpdate
+
     private val ruleEngine = LudoRuleEngine()
     private var rankCounter = 0
     private var tempPlayerCount = 2
     private var currentTokenCount = 1
     private var shouldGiveExtraTurn = false
     private val finishedPlayerIds = mutableSetOf<Int>()
-
-    // OWNER FIX: Flag to prevent zombie saves
     private var isGameAbandoned = false
+    private var timerJob: Job? = null
 
     init {
         if (LudoGameStateHolder.hasActiveGame) restoreGame()
         else _gameState.value = State.SETUP_THEME
+        startTimerLoop()
     }
 
-    fun selectTheme() {
-        _gameState.value = State.SETUP_PLAYERS
+    private fun startTimerLoop() {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                val state = _gameState.value
+                if (state == State.WAITING_FOR_ROLL || state == State.WAITING_FOR_MOVE || state == State.ANIMATING) {
+                    val current = _timerSeconds.value ?: 30
+                    if (current <= 1) {
+                        spawnDynamicSafeZone()
+                        _timerSeconds.value = 30
+                    } else {
+                        _timerSeconds.value = current - 1
+                    }
+                }
+            }
+        }
     }
 
-    fun selectPlayerCount(count: Int) {
-        tempPlayerCount = count
-        _gameState.value = State.SETUP_TOKENS
+    private fun spawnDynamicSafeZone() {
+        // OWNER FIX: Extract only the first 51 steps (.take(51)) to ban the home stretches
+        val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) +
+                LudoBoardConfig.PATH_GREEN.take(51) +
+                LudoBoardConfig.PATH_BLUE.take(51) +
+                LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
+
+        val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
+
+        if (available.isNotEmpty()) {
+            _dynamicSafeZone.value = available.random() // Erases the old star, spawns the new one
+        }
     }
+
+    fun selectTheme() { _gameState.value = State.SETUP_PLAYERS }
+    fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_TOKENS }
 
     fun startGame(tokenCount: Int) {
         currentTokenCount = tokenCount
@@ -69,7 +107,10 @@ class LudoViewModel : ViewModel() {
         _players.value = newPlayers
         _activePlayerIndex.value = 0
         finishedPlayerIds.clear()
-        isGameAbandoned = false // Reset the flag when starting a new game
+        isGameAbandoned = false
+        _timerSeconds.value = 30
+        _dynamicSafeZone.value = null
+
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${newPlayers.get(0).colorName}'s Turn"
         saveCurrentState()
@@ -86,14 +127,14 @@ class LudoViewModel : ViewModel() {
         finishedPlayerIds.addAll(LudoGameStateHolder.finishedPlayerIds)
         currentTokenCount = _players.value?.firstOrNull()?.tokenCount ?: 4
         isGameAbandoned = false
+        _timerSeconds.value = LudoGameStateHolder.timerSeconds
+        _dynamicSafeZone.value = LudoGameStateHolder.dynamicSafeZone
     }
 
     fun saveCurrentState() {
-        // OWNER FIX: Prevent 'onPause' from re-saving a game we just destroyed
         if (isGameAbandoned) return
-
         val p = _players.value ?: return
-        LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds)
+        LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds, _timerSeconds.value ?: 30, _dynamicSafeZone.value)
     }
 
     fun rollDice() {
@@ -104,16 +145,20 @@ class LudoViewModel : ViewModel() {
         val roll = (1..6).random()
         _diceValue.value = roll
 
-        // Bonus for rolling a 6
-        if (roll == 6) shouldGiveExtraTurn = true
+        val pIdx = _activePlayerIndex.value!!
+        val pList = _players.value!!
+        val p = pList[pIdx]
+
+        if (roll == 6) {
+            p.sixesRolled++
+            shouldGiveExtraTurn = true
+            _statsUpdate.value = Unit // Lightweight UI refresh
+        }
 
         viewModelScope.launch {
             delay(600)
-            val pIdx = _activePlayerIndex.value!!
-            val p = _players.value!!.get(pIdx)
-
             val valid = (0 until currentTokenCount).filter {
-                ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!) !is LudoRuleEngine.MoveResult.Invalid
+                ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!, _dynamicSafeZone.value) !is LudoRuleEngine.MoveResult.Invalid
             }
 
             if (valid.isNotEmpty()) {
@@ -123,7 +168,7 @@ class LudoViewModel : ViewModel() {
                     _statusMessage.value = "Select Token"
                 }
             } else {
-                shouldGiveExtraTurn = false // Lose bonus if no moves possible
+                shouldGiveExtraTurn = false
                 delay(800)
                 passTurn()
             }
@@ -133,14 +178,13 @@ class LudoViewModel : ViewModel() {
     fun onTokenClicked(tIdx: Int) {
         if (_gameState.value != State.WAITING_FOR_MOVE && _gameState.value != State.ANIMATING) return
         val pIdx = _activePlayerIndex.value!!
-        val p = _players.value!!.get(pIdx)
+        val pList = _players.value!!
+        val p = pList[pIdx]
         val roll = _diceValue.value!!
-        val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions.get(tIdx), roll, _players.value!!)
+        val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions.get(tIdx), roll, pList, _dynamicSafeZone.value)
 
         if (res is LudoRuleEngine.MoveResult.Invalid) return
         _gameState.value = State.ANIMATING
-
-        // Give extra turn for Kills or Wins (Home)
         if (res.givesExtraTurn) shouldGiveExtraTurn = true
 
         val isSpawn = p.tokenPositions.get(tIdx) == -1
@@ -153,12 +197,15 @@ class LudoViewModel : ViewModel() {
             is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
             is LudoRuleEngine.MoveResult.Kill -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
-                _players.value!!.get(res.victimPlayerIdx).tokenPositions.set(res.victimTokenIdx, -1)
+                pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
                 sound = SoundType.KILL
+                p.kills++
+                pList[res.victimPlayerIdx].deaths++
+                _statsUpdate.value = Unit // Lightweight UI refresh
             }
             is LudoRuleEngine.MoveResult.Win -> {
-                p.tokenPositions.set(tIdx, 56) // FIX: 56 is Home
+                p.tokenPositions.set(tIdx, 56)
                 sound = SoundType.WIN
                 if (p.getFinishedCount() == currentTokenCount) {
                     rankCounter++
@@ -170,6 +217,7 @@ class LudoViewModel : ViewModel() {
             }
             else -> {}
         }
+        // ONLY send animation payload. Do NOT trigger _players.value
         _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
     }
 
@@ -179,7 +227,6 @@ class LudoViewModel : ViewModel() {
         _turnUpdate.value = null
         val p = _players.value!!.get(_activePlayerIndex.value!!)
 
-        // If player just finished their last token, they don't get an extra turn, turn passes
         if (finishedPlayerIds.contains(p.id)) {
             passTurn()
         } else if (shouldGiveExtraTurn) {
@@ -215,7 +262,7 @@ class LudoViewModel : ViewModel() {
     }
 
     fun quitGame() {
-        isGameAbandoned = true // Flag the game as dead
+        isGameAbandoned = true
         LudoGameStateHolder.clear()
     }
 }

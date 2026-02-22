@@ -8,7 +8,10 @@ object LudoGameStateHolder {
     var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_THEME
     var statusMessage: String = "Select Board"
     var rankCounter: Int = 0
-    var finishedPlayerIds: MutableSet<Int> = mutableSetOf() // Tracks who is finished
+    var finishedPlayerIds: MutableSet<Int> = mutableSetOf()
+
+    var timerSeconds: Int = 30
+    var dynamicSafeZone: Pair<Int, Int>? = null // OWNER FIX: Only one star allowed
 
     fun saveState(
         _players: List<LudoPlayer>,
@@ -17,7 +20,9 @@ object LudoGameStateHolder {
         _state: LudoViewModel.State,
         _msg: String,
         _rank: Int,
-        _finished: Set<Int>
+        _finished: Set<Int>,
+        _timer: Int,
+        _dynamicSafeZone: Pair<Int, Int>?
     ) {
         players = _players
         activePlayerIndex = _activeIdx
@@ -26,6 +31,8 @@ object LudoGameStateHolder {
         statusMessage = _msg
         rankCounter = _rank
         finishedPlayerIds = _finished.toMutableSet()
+        timerSeconds = _timer
+        dynamicSafeZone = _dynamicSafeZone
         hasActiveGame = true
     }
 
@@ -38,5 +45,7 @@ object LudoGameStateHolder {
         rankCounter = 0
         finishedPlayerIds.clear()
         statusMessage = "Select Board"
+        timerSeconds = 30
+        dynamicSafeZone = null
     }
 }
