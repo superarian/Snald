@@ -94,6 +94,24 @@ class LudoViewModel : ViewModel() {
         }
     }
 
+    // --- OWNER FIX: Robust Back Navigation ---
+    fun navigateBackInSetup(): Boolean {
+        return when (_gameState.value) {
+            State.SETUP_TOKENS -> {
+                _gameState.value = State.SETUP_PLAYERS
+                true
+            }
+            State.SETUP_PLAYERS -> {
+                _gameState.value = State.SETUP_THEME
+                true
+            }
+            State.SETUP_THEME -> {
+                false // Tell Activity to finish()
+            }
+            else -> false
+        }
+    }
+
     fun selectTheme() { _gameState.value = State.SETUP_PLAYERS }
     fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_TOKENS }
 

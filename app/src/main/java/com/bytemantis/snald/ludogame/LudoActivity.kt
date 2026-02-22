@@ -2,6 +2,7 @@ package com.bytemantis.snald.ludogame
 
 import android.content.Context
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -43,6 +44,17 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var textDashP4: TextView
     private lateinit var textDashTimer: TextView
 
+    // --- OWNER FIX: Video Declarations ---
+    private lateinit var videoSetupTop: VideoView
+    private lateinit var videoSetupBottom: VideoView
+
+    // TODO: Replace these with your actual 9 video file names!
+    private val setupVideoResources = listOf(
+        R.raw.random_bgm_1, R.raw.random_bgm_2, R.raw.random_bgm_3,
+        R.raw.random_bgm_4, R.raw.random_bgm_5, R.raw.random_bgm_6,
+        R.raw.random_bgm_7, R.raw.random_bgm_8, R.raw.random_bgm_9
+    )
+
     private lateinit var diceViews: Map<Int, ImageView>
     private lateinit var playerLayouts: Map<Int, View>
     private lateinit var progressBars: Map<Int, ProgressBar>
@@ -73,8 +85,11 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
+                // --- OWNER FIX: Robust Back Navigation Integration ---
                 if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
-                    finish()
+                    if (!viewModel.navigateBackInSetup()) {
+                        finish() // Only finishes if we are already at the first step
+                    }
                 } else if (state == LudoViewModel.State.GAME_OVER) {
                     viewModel.quitGame()
                     finish()
@@ -103,6 +118,10 @@ class LudoActivity : AppCompatActivity() {
         groupTheme = findViewById(R.id.group_setup_theme)
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
+
+        // Find Video Views
+        videoSetupTop = findViewById(R.id.video_setup_top)
+        videoSetupBottom = findViewById(R.id.video_setup_bottom)
 
         layoutDashboard = findViewById(R.id.layout_dashboard)
         textDashP1 = findViewById(R.id.text_dash_p1)
@@ -164,6 +183,34 @@ class LudoActivity : AppCompatActivity() {
         }
     }
 
+    // --- OWNER FIX: Video Manager Methods ---
+    private fun playRandomSetupVideos() {
+        if (videoSetupTop.isPlaying || videoSetupBottom.isPlaying) return // Prevent restarting if already looping
+
+        val randomVids = setupVideoResources.shuffled().take(2)
+        if (randomVids.size == 2) {
+            setupVideoLoop(videoSetupTop, randomVids[0])
+            setupVideoLoop(videoSetupBottom, randomVids[1])
+        }
+    }
+
+    private fun setupVideoLoop(videoView: VideoView, resId: Int) {
+        try {
+            val uri = Uri.parse("android.resource://$packageName/$resId")
+            videoView.setVideoURI(uri)
+            videoView.setOnPreparedListener { mp ->
+                mp.isLooping = true
+                mp.setVolume(0f, 0f) // Crucial: Mute the video so your BGM can play!
+                videoView.start()
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun stopSetupVideos() {
+        if (videoSetupTop.isPlaying) videoSetupTop.stopPlayback()
+        if (videoSetupBottom.isPlaying) videoSetupBottom.stopPlayback()
+    }
+
     private fun applyAndSaveTheme(themeResId: Int) {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_THEME, themeResId).apply()
         boardImage.setImageResource(themeResId)
@@ -183,11 +230,30 @@ class LudoActivity : AppCompatActivity() {
             }
 
             when(state) {
-                LudoViewModel.State.SETUP_THEME -> { setupLayout.visibility = View.VISIBLE; groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD" }
-                LudoViewModel.State.SETUP_PLAYERS -> { setupLayout.visibility = View.VISIBLE; groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH" }
-                LudoViewModel.State.SETUP_TOKENS -> { setupLayout.visibility = View.VISIBLE; groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH" }
-                LudoViewModel.State.GAME_OVER -> { setupLayout.visibility = View.GONE; showGameOverDialog() }
-                else -> setupLayout.visibility = View.GONE
+                LudoViewModel.State.SETUP_THEME -> {
+                    setupLayout.visibility = View.VISIBLE
+                    playRandomSetupVideos()
+                    groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD"
+                }
+                LudoViewModel.State.SETUP_PLAYERS -> {
+                    setupLayout.visibility = View.VISIBLE
+                    playRandomSetupVideos()
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH"
+                }
+                LudoViewModel.State.SETUP_TOKENS -> {
+                    setupLayout.visibility = View.VISIBLE
+                    playRandomSetupVideos()
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH"
+                }
+                LudoViewModel.State.GAME_OVER -> {
+                    setupLayout.visibility = View.GONE
+                    stopSetupVideos()
+                    showGameOverDialog()
+                }
+                else -> {
+                    setupLayout.visibility = View.GONE
+                    stopSetupVideos() // Free up resources instantly when gameplay begins
+                }
             }
         }
 
@@ -430,6 +496,7 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         soundManager.pauseLudoMusic()
+        stopSetupVideos() // Ensure memory is completely released
         val state = viewModel.gameState.value
         if (state != LudoViewModel.State.SETUP_THEME && state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_TOKENS && state != LudoViewModel.State.GAME_OVER) {
             viewModel.saveCurrentState()
@@ -441,6 +508,8 @@ class LudoActivity : AppCompatActivity() {
         val state = viewModel.gameState.value
         if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
             soundManager.resumeLudoMusic()
+        } else if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
+            playRandomSetupVideos() // Resume video loops if returning to setup screen
         }
     }
 }

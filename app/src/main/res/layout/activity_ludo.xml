@@ -195,55 +195,76 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="#F21A1A1A"
-        android:gravity="center"
         android:orientation="vertical"
         android:elevation="200dp"
         android:visibility="visible">
 
-        <TextView
-            android:id="@+id/text_setup_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="LUDO MATCH"
-            android:textColor="#FFF"
-            android:textSize="36sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="50dp"/>
+        <VideoView
+            android:id="@+id/video_setup_top"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
 
         <LinearLayout
-            android:id="@+id/group_setup_theme"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:gravity="center"
-            android:visibility="gone">
-            <Button android:id="@+id/btn_theme_classic" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="CLASSIC BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_theme_wood" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="WOODEN BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_theme_neon" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="NEON BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+            android:paddingVertical="20dp">
+
+            <TextView
+                android:id="@+id/text_setup_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LUDO MATCH"
+                android:textColor="#FFF"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="50dp"/>
+
+            <LinearLayout
+                android:id="@+id/group_setup_theme"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_theme_classic" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="CLASSIC BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_theme_wood" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="WOODEN BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_theme_neon" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="NEON BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_players"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center">
+                <Button android:id="@+id/btn_ludo_2p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_ludo_3p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="3 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_ludo_4p" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_tokens"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_tokens_1" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="1 TOKEN (QUICK)" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_tokens_2" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 TOKENS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_tokens_4" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 TOKENS (FULL)" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/group_setup_players"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center">
-            <Button android:id="@+id/btn_ludo_2p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_ludo_3p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="3 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_ludo_4p" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
-        </LinearLayout>
+        <VideoView
+            android:id="@+id/video_setup_bottom"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
 
-        <LinearLayout
-            android:id="@+id/group_setup_tokens"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:visibility="gone">
-            <Button android:id="@+id/btn_tokens_1" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="1 TOKEN (QUICK)" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_tokens_2" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 TOKENS" android:textColor="#FFF" app:backgroundTint="@null" />
-            <Button android:id="@+id/btn_tokens_4" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 TOKENS (FULL)" android:textColor="#FFF" app:backgroundTint="@null" />
-        </LinearLayout>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
