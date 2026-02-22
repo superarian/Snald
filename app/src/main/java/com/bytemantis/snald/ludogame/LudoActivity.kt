@@ -175,6 +175,13 @@ class LudoActivity : AppCompatActivity() {
     private fun setupObservers() {
         viewModel.gameState.observe(this) { state ->
             layoutDashboard.visibility = if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) View.GONE else View.VISIBLE
+
+            if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
+                soundManager.startLudoMusic()
+            } else {
+                soundManager.stopLudoMusic()
+            }
+
             when(state) {
                 LudoViewModel.State.SETUP_THEME -> { setupLayout.visibility = View.VISIBLE; groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD" }
                 LudoViewModel.State.SETUP_PLAYERS -> { setupLayout.visibility = View.VISIBLE; groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH" }
@@ -203,7 +210,7 @@ class LudoActivity : AppCompatActivity() {
         viewModel.statusMessage.observe(this) { statusText.text = it }
         viewModel.announcement.observe(this) { ann -> if (ann != null) { showDynamicAnnouncement(ann); viewModel.clearAnnouncement() } }
         viewModel.turnUpdate.observe(this) { if (it != null && isUiInitialized) playTurnSequence(it) }
-        viewModel.statsUpdate.observe(this) { updateDashboardStats() } // OWNER FIX: Updates text only
+        viewModel.statsUpdate.observe(this) { updateDashboardStats() }
 
         viewModel.diceValue.observe(this) { dice ->
             val dv = diceViews.get(viewModel.activePlayerIndex.value!! + 1)
@@ -231,7 +238,7 @@ class LudoActivity : AppCompatActivity() {
 
     private fun renderDynamicSafeZone(coord: Pair<Int, Int>?) {
         if (cellW <= 0) return
-        starOverlay.removeAllViews() // Wipe old star
+        starOverlay.removeAllViews()
         if (coord != null) {
             val star = ImageView(this).apply {
                 setImageResource(android.R.drawable.btn_star_big_on)
@@ -296,6 +303,8 @@ class LudoActivity : AppCompatActivity() {
             LudoViewModel.SoundType.SAFE -> soundManager.playSafeZone()
             LudoViewModel.SoundType.WIN -> soundManager.playWin()
             LudoViewModel.SoundType.KILL -> soundManager.playSlideBack()
+            LudoViewModel.SoundType.STAR_COLLECT -> soundManager.playStarCollect()
+            LudoViewModel.SoundType.SHIELD_BREAK -> soundManager.playStarUsed()
             else -> {}
         }
         if (u.killInfo != null) {
@@ -324,6 +333,17 @@ class LudoActivity : AppCompatActivity() {
             for (tIdx in 0 until player.tokenPositions.size) {
                 val pos = player.tokenPositions.get(tIdx)
                 val v = allTokenViews.get(pIdx).get(tIdx)
+                val hasShield = player.tokenShields.get(tIdx)
+
+                if (hasShield) {
+                    v.setBackgroundResource(R.drawable.bg_ludo_halo)
+                    val padding = (cellW * 0.20f).toInt()
+                    v.setPadding(padding, padding, padding, padding)
+                } else {
+                    v.background = null
+                    v.setPadding(0, 0, 0, 0)
+                }
+
                 if (pos == -1) {
                     val b = getBaseCoord(pIdx, tIdx)
                     moveViewToPrecise(v, b.first, b.second); v.scaleX = 1f; v.scaleY = 1f; v.visibility = View.VISIBLE
@@ -409,9 +429,18 @@ class LudoActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         soundManager.pauseMusic()
+        soundManager.pauseLudoMusic()
         val state = viewModel.gameState.value
         if (state != LudoViewModel.State.SETUP_THEME && state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_TOKENS && state != LudoViewModel.State.GAME_OVER) {
             viewModel.saveCurrentState()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val state = viewModel.gameState.value
+        if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
+            soundManager.resumeLudoMusic()
         }
     }
 }

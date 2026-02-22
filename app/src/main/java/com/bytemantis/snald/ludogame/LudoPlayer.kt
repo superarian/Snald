@@ -5,7 +5,7 @@ data class LudoPlayer(
     val colorName: String,
     val tokenCount: Int = 4,
     val tokenPositions: MutableList<Int> = MutableList(tokenCount) { -1 },
-    // NEW: RPG Stats tracking
+    val tokenShields: MutableList<Boolean> = MutableList(tokenCount) { false },
     var kills: Int = 0,
     var deaths: Int = 0,
     var sixesRolled: Int = 0

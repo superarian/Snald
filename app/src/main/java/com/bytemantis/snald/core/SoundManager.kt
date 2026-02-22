@@ -16,6 +16,7 @@ class SoundManager(private val context: Context) {
 
     // Background Music
     private var menuMusicPlayer: MediaPlayer? = null
+    private var ludoMusicPlayer: MediaPlayer? = null
     private var isMusicEnabled = true
 
     init {
@@ -41,12 +42,10 @@ class SoundManager(private val context: Context) {
         soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
         soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
         soundMap.put(R.raw.sfx_fast_flash, soundPool.load(context, R.raw.sfx_fast_flash, 1))
-
-        // OWNER ADDITION: Safe Zone Sound
         soundMap.put(R.raw.sfx_safe_zone, soundPool.load(context, R.raw.sfx_safe_zone, 1))
     }
 
-    // --- Music Control ---
+    // --- Menu Music Control ---
     fun startMenuMusic() {
         if (!isMusicEnabled) return
         if (menuMusicPlayer == null) {
@@ -68,6 +67,36 @@ class SoundManager(private val context: Context) {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
+    // --- Ludo Music Control ---
+    fun startLudoMusic() {
+        if (!isMusicEnabled) return
+        if (ludoMusicPlayer == null) {
+            try {
+                ludoMusicPlayer = MediaPlayer.create(context, R.raw.bgm_ludo)
+                ludoMusicPlayer?.isLooping = true
+                ludoMusicPlayer?.setVolume(0.4f, 0.4f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (ludoMusicPlayer?.isPlaying == false) ludoMusicPlayer?.start()
+    }
+
+    fun stopLudoMusic() {
+        try {
+            if (ludoMusicPlayer?.isPlaying == true) {
+                ludoMusicPlayer?.pause()
+                ludoMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseLudoMusic() {
+        if (ludoMusicPlayer?.isPlaying == true) ludoMusicPlayer?.pause()
+    }
+
+    fun resumeLudoMusic() {
+        if (ludoMusicPlayer != null && !ludoMusicPlayer!!.isPlaying) ludoMusicPlayer?.start()
+    }
+
     fun pauseMusic() {
         if (menuMusicPlayer?.isPlaying == true) menuMusicPlayer?.pause()
     }
@@ -87,8 +116,6 @@ class SoundManager(private val context: Context) {
     fun playPacmanEntry(): Int = play(R.raw.sfx_pacman_entry)
     fun playPacmanMove(): Int = play(R.raw.sfx_pacman_move)
     fun playFastFlash(): Int = play(R.raw.sfx_fast_flash)
-
-    // OWNER ADDITION
     fun playSafeZone(): Int = play(R.raw.sfx_safe_zone)
 
     fun stop(streamId: Int) {

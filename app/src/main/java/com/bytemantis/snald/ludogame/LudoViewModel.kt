@@ -14,7 +14,7 @@ class LudoViewModel : ViewModel() {
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
     data class Announcement(val message: String, val type: AnnouncementType)
     data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
-    enum class SoundType { NONE, SAFE, KILL, WIN }
+    enum class SoundType { NONE, SAFE, KILL, WIN, STAR_COLLECT, SHIELD_BREAK }
     data class KillInfo(val victimPlayerIdx: Int, val victimTokenIdx: Int, val fromPos: Int)
 
     private val _gameState = MutableLiveData<State>()
@@ -41,11 +41,9 @@ class LudoViewModel : ViewModel() {
     private val _timerSeconds = MutableLiveData<Int>(30)
     val timerSeconds: LiveData<Int> = _timerSeconds
 
-    // OWNER FIX: Single nullable coordinate for the dynamic star
     private val _dynamicSafeZone = MutableLiveData<Pair<Int, Int>?>(null)
     val dynamicSafeZone: LiveData<Pair<Int, Int>?> = _dynamicSafeZone
 
-    // OWNER FIX: Lightweight trigger to update text without redrawing board
     private val _statsUpdate = MutableLiveData<Unit>()
     val statsUpdate: LiveData<Unit> = _statsUpdate
 
@@ -84,7 +82,6 @@ class LudoViewModel : ViewModel() {
     }
 
     private fun spawnDynamicSafeZone() {
-        // OWNER FIX: Extract only the first 51 steps (.take(51)) to ban the home stretches
         val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) +
                 LudoBoardConfig.PATH_GREEN.take(51) +
                 LudoBoardConfig.PATH_BLUE.take(51) +
@@ -93,7 +90,7 @@ class LudoViewModel : ViewModel() {
         val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
 
         if (available.isNotEmpty()) {
-            _dynamicSafeZone.value = available.random() // Erases the old star, spawns the new one
+            _dynamicSafeZone.value = available.random()
         }
     }
 
@@ -152,7 +149,7 @@ class LudoViewModel : ViewModel() {
         if (roll == 6) {
             p.sixesRolled++
             shouldGiveExtraTurn = true
-            _statsUpdate.value = Unit // Lightweight UI refresh
+            _statsUpdate.value = Unit
         }
 
         viewModelScope.launch {
@@ -193,19 +190,40 @@ class LudoViewModel : ViewModel() {
 
         when(res) {
             is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions.set(tIdx, res.newPosIndex)
-            is LudoRuleEngine.MoveResult.SafeZoneLanded -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
-            is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.SafeZoneLanded -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                sound = SoundType.SAFE
+            }
+            is LudoRuleEngine.MoveResult.SafeStack -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                sound = SoundType.SAFE
+            }
+            is LudoRuleEngine.MoveResult.StarCollected -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                p.tokenShields.set(tIdx, true)
+                _dynamicSafeZone.value = null
+                sound = SoundType.STAR_COLLECT
+                _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL)
+            }
+            is LudoRuleEngine.MoveResult.ShieldBreak -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
+                sound = SoundType.SHIELD_BREAK
+                _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL)
+            }
             is LudoRuleEngine.MoveResult.Kill -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
                 pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
+                pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
                 sound = SoundType.KILL
                 p.kills++
                 pList[res.victimPlayerIdx].deaths++
-                _statsUpdate.value = Unit // Lightweight UI refresh
+                _statsUpdate.value = Unit
             }
             is LudoRuleEngine.MoveResult.Win -> {
                 p.tokenPositions.set(tIdx, 56)
+                p.tokenShields.set(tIdx, false)
                 sound = SoundType.WIN
                 if (p.getFinishedCount() == currentTokenCount) {
                     rankCounter++
@@ -217,7 +235,7 @@ class LudoViewModel : ViewModel() {
             }
             else -> {}
         }
-        // ONLY send animation payload. Do NOT trigger _players.value
+
         _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
     }
 

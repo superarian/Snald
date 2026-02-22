@@ -9,6 +9,8 @@ class LudoRuleEngine {
         data class Win(val newPosIndex: Int) : MoveResult(true)
         data class SafeStack(val newPosIndex: Int) : MoveResult()
         data class SafeZoneLanded(val newPosIndex: Int) : MoveResult()
+        data class StarCollected(val newPosIndex: Int) : MoveResult()
+        data class ShieldBreak(val newPosIndex: Int, val victimPlayerIdx: Int, val victimTokenIdx: Int) : MoveResult()
     }
 
     fun calculateMove(
@@ -17,7 +19,7 @@ class LudoRuleEngine {
         currentPos: Int,
         diceRoll: Int,
         allPlayers: List<LudoPlayer>,
-        dynamicSafeZone: Pair<Int, Int>? // OWNER FIX: Expecting single star
+        dynamicSafeZone: Pair<Int, Int>?
     ): MoveResult {
         val player = allPlayers.get(activePlayerIdx)
         val tokensActiveOnBoard = player.tokenPositions.count { it in 0..55 }
@@ -43,16 +45,26 @@ class LudoRuleEngine {
         val targetGlobal = LudoBoardConfig.getGlobalCoord(activePlayerIdx, targetPos)
             ?: return MoveResult.MoveOnly(targetPos)
 
-        // OWNER FIX: Check against the single dynamic safe zone
-        val isStaticSafe = LudoBoardConfig.SAFE_ZONES.contains(targetGlobal) || (dynamicSafeZone == targetGlobal)
+        val isStaticSafe = LudoBoardConfig.SAFE_ZONES.contains(targetGlobal)
+        val isDynamicSafe = (dynamicSafeZone == targetGlobal)
         val collision = checkCollision(activePlayerIdx, targetPos, allPlayers)
 
         if (collision != null) {
+            val (victimP, victimT) = collision
+
             if (isEnemyBlock(activePlayerIdx, targetPos, allPlayers) || isStaticSafe) {
                 return MoveResult.SafeStack(targetPos)
             }
-            val (victimP, victimT) = collision
+
+            if (allPlayers.get(victimP).tokenShields.get(victimT)) {
+                return MoveResult.ShieldBreak(targetPos, victimP, victimT)
+            }
+
             return MoveResult.Kill(targetPos, victimP, victimT)
+        }
+
+        if (isDynamicSafe) {
+            return MoveResult.StarCollected(targetPos)
         }
 
         if (isStaticSafe) {
