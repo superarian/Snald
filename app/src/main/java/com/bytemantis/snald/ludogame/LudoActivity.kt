@@ -44,7 +44,6 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var textDashP4: TextView
     private lateinit var textDashTimer: TextView
 
-    // --- OWNER FIX: Video Declarations ---
     private lateinit var videoSetupTop: VideoView
     private lateinit var videoSetupBottom: VideoView
 
@@ -85,10 +84,10 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                // --- OWNER FIX: Robust Back Navigation Integration ---
-                if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
+                if (state == LudoViewModel.State.SETUP_THEME ||
+                    state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
                     if (!viewModel.navigateBackInSetup()) {
-                        finish() // Only finishes if we are already at the first step
+                        finish()
                     }
                 } else if (state == LudoViewModel.State.GAME_OVER) {
                     viewModel.quitGame()
@@ -119,7 +118,6 @@ class LudoActivity : AppCompatActivity() {
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
 
-        // Find Video Views
         videoSetupTop = findViewById(R.id.video_setup_top)
         videoSetupBottom = findViewById(R.id.video_setup_bottom)
 
@@ -183,9 +181,8 @@ class LudoActivity : AppCompatActivity() {
         }
     }
 
-    // --- OWNER FIX: Video Manager Methods ---
     private fun playRandomSetupVideos() {
-        if (videoSetupTop.isPlaying || videoSetupBottom.isPlaying) return // Prevent restarting if already looping
+        if (videoSetupTop.isPlaying || videoSetupBottom.isPlaying) return
 
         val randomVids = setupVideoResources.shuffled().take(2)
         if (randomVids.size == 2) {
@@ -200,7 +197,7 @@ class LudoActivity : AppCompatActivity() {
             videoView.setVideoURI(uri)
             videoView.setOnPreparedListener { mp ->
                 mp.isLooping = true
-                mp.setVolume(0f, 0f) // Crucial: Mute the video so your BGM can play!
+                mp.setVolume(0f, 0f)
                 videoView.start()
             }
         } catch (e: Exception) { e.printStackTrace() }
@@ -219,16 +216,38 @@ class LudoActivity : AppCompatActivity() {
         viewModel.selectTheme()
     }
 
+    // --- NEW: Centralized Audio Logic for Game State ---
+    private fun handleGameStateMusic(state: LudoViewModel.State, themeResId: Int) {
+        when (state) {
+            LudoViewModel.State.SETUP_THEME,
+            LudoViewModel.State.SETUP_PLAYERS,
+            LudoViewModel.State.SETUP_TOKENS -> {
+                soundManager.stopLudoMusic()
+                soundManager.startMenuMusic()
+            }
+            LudoViewModel.State.WAITING_FOR_ROLL,
+            LudoViewModel.State.WAITING_FOR_MOVE,
+            LudoViewModel.State.ANIMATING -> {
+                soundManager.playMusicForTheme(themeResId)
+            }
+            LudoViewModel.State.GAME_OVER -> {
+                soundManager.stopMenuMusic()
+                soundManager.stopLudoMusic()
+            }
+        }
+    }
+
     private fun setupObservers() {
         viewModel.gameState.observe(this) { state ->
             layoutDashboard.visibility = if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) View.GONE else View.VISIBLE
 
-            if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
-                soundManager.startLudoMusic()
-            } else {
-                soundManager.stopLudoMusic()
-            }
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
 
+            // Execute audio changes based strictly on game state and current theme
+            handleGameStateMusic(state, currentTheme)
+
+            // Execute UI changes ONLY. No audio commands belong inside this block anymore.
             when(state) {
                 LudoViewModel.State.SETUP_THEME -> {
                     setupLayout.visibility = View.VISIBLE
@@ -252,7 +271,7 @@ class LudoActivity : AppCompatActivity() {
                 }
                 else -> {
                     setupLayout.visibility = View.GONE
-                    stopSetupVideos() // Free up resources instantly when gameplay begins
+                    stopSetupVideos()
                 }
             }
         }
@@ -496,7 +515,7 @@ class LudoActivity : AppCompatActivity() {
         super.onPause()
         soundManager.pauseMusic()
         soundManager.pauseLudoMusic()
-        stopSetupVideos() // Ensure memory is completely released
+        stopSetupVideos()
         val state = viewModel.gameState.value
         if (state != LudoViewModel.State.SETUP_THEME && state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_TOKENS && state != LudoViewModel.State.GAME_OVER) {
             viewModel.saveCurrentState()
@@ -505,11 +524,19 @@ class LudoActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        val state = viewModel.gameState.value
+        val state = viewModel.gameState.value ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val currentTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
+
         if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
-            soundManager.resumeLudoMusic()
+            if (currentTheme == R.drawable.ludo_board_neon) {
+                soundManager.resumeLudoMusic()
+            } else if (currentTheme == R.drawable.ludo_board) {
+                soundManager.resumeMusic()
+            }
         } else if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
-            playRandomSetupVideos() // Resume video loops if returning to setup screen
+            playRandomSetupVideos()
+            soundManager.resumeMusic()
         }
     }
 }

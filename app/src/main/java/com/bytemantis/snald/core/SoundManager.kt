@@ -45,6 +45,27 @@ class SoundManager(private val context: Context) {
         soundMap.put(R.raw.sfx_safe_zone, soundPool.load(context, R.raw.sfx_safe_zone, 1))
     }
 
+    // --- Theme Music Control ---
+    fun playMusicForTheme(themeResId: Int) {
+        when (themeResId) {
+            R.drawable.ludo_board -> {
+                // Classic Board: Use Menu Music
+                stopLudoMusic()
+                startMenuMusic()
+            }
+            R.drawable.ludo_board_neon -> {
+                // Neon Board: Use Ludo Music
+                stopMenuMusic()
+                startLudoMusic()
+            }
+            else -> {
+                // Wooden Board (or others): Silence
+                stopMenuMusic()
+                stopLudoMusic()
+            }
+        }
+    }
+
     // --- Menu Music Control ---
     fun startMenuMusic() {
         if (!isMusicEnabled) return
