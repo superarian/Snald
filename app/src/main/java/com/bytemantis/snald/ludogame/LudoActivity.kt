@@ -216,13 +216,13 @@ class LudoActivity : AppCompatActivity() {
         viewModel.selectTheme()
     }
 
-    // --- NEW: Centralized Audio Logic for Game State ---
     private fun handleGameStateMusic(state: LudoViewModel.State, themeResId: Int) {
         when (state) {
             LudoViewModel.State.SETUP_THEME,
             LudoViewModel.State.SETUP_PLAYERS,
             LudoViewModel.State.SETUP_TOKENS -> {
-                soundManager.stopLudoMusic()
+                soundManager.stopNeonMusic()
+                soundManager.stopWoodMusic()
                 soundManager.startMenuMusic()
             }
             LudoViewModel.State.WAITING_FOR_ROLL,
@@ -232,7 +232,8 @@ class LudoActivity : AppCompatActivity() {
             }
             LudoViewModel.State.GAME_OVER -> {
                 soundManager.stopMenuMusic()
-                soundManager.stopLudoMusic()
+                soundManager.stopNeonMusic()
+                soundManager.stopWoodMusic()
             }
         }
     }
@@ -244,10 +245,8 @@ class LudoActivity : AppCompatActivity() {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val currentTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
 
-            // Execute audio changes based strictly on game state and current theme
             handleGameStateMusic(state, currentTheme)
 
-            // Execute UI changes ONLY. No audio commands belong inside this block anymore.
             when(state) {
                 LudoViewModel.State.SETUP_THEME -> {
                     setupLayout.visibility = View.VISIBLE
@@ -514,7 +513,8 @@ class LudoActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         soundManager.pauseMusic()
-        soundManager.pauseLudoMusic()
+        soundManager.pauseNeonMusic()
+        soundManager.pauseWoodMusic()
         stopSetupVideos()
         val state = viewModel.gameState.value
         if (state != LudoViewModel.State.SETUP_THEME && state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_TOKENS && state != LudoViewModel.State.GAME_OVER) {
@@ -530,7 +530,9 @@ class LudoActivity : AppCompatActivity() {
 
         if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
             if (currentTheme == R.drawable.ludo_board_neon) {
-                soundManager.resumeLudoMusic()
+                soundManager.resumeNeonMusic()
+            } else if (currentTheme == R.drawable.ludo_board_wood) {
+                soundManager.resumeWoodMusic()
             } else if (currentTheme == R.drawable.ludo_board) {
                 soundManager.resumeMusic()
             }

@@ -14,9 +14,10 @@ class SoundManager(private val context: Context) {
     private val soundPool: SoundPool
     private val soundMap = SparseIntArray()
 
-    // Background Music
+    // Background Music Players
     private var menuMusicPlayer: MediaPlayer? = null
-    private var ludoMusicPlayer: MediaPlayer? = null
+    private var neonMusicPlayer: MediaPlayer? = null // Renamed from ludoMusicPlayer
+    private var woodMusicPlayer: MediaPlayer? = null
     private var isMusicEnabled = true
 
     init {
@@ -50,18 +51,26 @@ class SoundManager(private val context: Context) {
         when (themeResId) {
             R.drawable.ludo_board -> {
                 // Classic Board: Use Menu Music
-                stopLudoMusic()
+                stopNeonMusic()
+                stopWoodMusic()
                 startMenuMusic()
             }
             R.drawable.ludo_board_neon -> {
-                // Neon Board: Use Ludo Music
+                // Neon Board: Use Neon Music
                 stopMenuMusic()
-                startLudoMusic()
+                stopWoodMusic()
+                startNeonMusic()
+            }
+            R.drawable.ludo_board_wood -> {
+                // Wooden Board: Use Wood Music
+                stopMenuMusic()
+                stopNeonMusic()
+                startWoodMusic()
             }
             else -> {
-                // Wooden Board (or others): Silence
                 stopMenuMusic()
-                stopLudoMusic()
+                stopNeonMusic()
+                stopWoodMusic()
             }
         }
     }
@@ -88,42 +97,72 @@ class SoundManager(private val context: Context) {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // --- Ludo Music Control ---
-    fun startLudoMusic() {
-        if (!isMusicEnabled) return
-        if (ludoMusicPlayer == null) {
-            try {
-                ludoMusicPlayer = MediaPlayer.create(context, R.raw.bgm_ludo)
-                ludoMusicPlayer?.isLooping = true
-                ludoMusicPlayer?.setVolume(0.4f, 0.4f)
-            } catch (e: Exception) { e.printStackTrace() }
-        }
-        if (ludoMusicPlayer?.isPlaying == false) ludoMusicPlayer?.start()
-    }
-
-    fun stopLudoMusic() {
-        try {
-            if (ludoMusicPlayer?.isPlaying == true) {
-                ludoMusicPlayer?.pause()
-                ludoMusicPlayer?.seekTo(0)
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    fun pauseLudoMusic() {
-        if (ludoMusicPlayer?.isPlaying == true) ludoMusicPlayer?.pause()
-    }
-
-    fun resumeLudoMusic() {
-        if (ludoMusicPlayer != null && !ludoMusicPlayer!!.isPlaying) ludoMusicPlayer?.start()
-    }
-
     fun pauseMusic() {
         if (menuMusicPlayer?.isPlaying == true) menuMusicPlayer?.pause()
     }
 
     fun resumeMusic() {
         if (menuMusicPlayer != null && !menuMusicPlayer!!.isPlaying) menuMusicPlayer?.start()
+    }
+
+    // --- Neon Music Control ---
+    fun startNeonMusic() {
+        if (!isMusicEnabled) return
+        if (neonMusicPlayer == null) {
+            try {
+                neonMusicPlayer = MediaPlayer.create(context, R.raw.bgm_neon)
+                neonMusicPlayer?.isLooping = true
+                neonMusicPlayer?.setVolume(0.4f, 0.4f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (neonMusicPlayer?.isPlaying == false) neonMusicPlayer?.start()
+    }
+
+    fun stopNeonMusic() {
+        try {
+            if (neonMusicPlayer?.isPlaying == true) {
+                neonMusicPlayer?.pause()
+                neonMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseNeonMusic() {
+        if (neonMusicPlayer?.isPlaying == true) neonMusicPlayer?.pause()
+    }
+
+    fun resumeNeonMusic() {
+        if (neonMusicPlayer != null && !neonMusicPlayer!!.isPlaying) neonMusicPlayer?.start()
+    }
+
+    // --- Wood Music Control ---
+    fun startWoodMusic() {
+        if (!isMusicEnabled) return
+        if (woodMusicPlayer == null) {
+            try {
+                woodMusicPlayer = MediaPlayer.create(context, R.raw.bgm_wood)
+                woodMusicPlayer?.isLooping = true
+                woodMusicPlayer?.setVolume(0.4f, 0.4f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (woodMusicPlayer?.isPlaying == false) woodMusicPlayer?.start()
+    }
+
+    fun stopWoodMusic() {
+        try {
+            if (woodMusicPlayer?.isPlaying == true) {
+                woodMusicPlayer?.pause()
+                woodMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseWoodMusic() {
+        if (woodMusicPlayer?.isPlaying == true) woodMusicPlayer?.pause()
+    }
+
+    fun resumeWoodMusic() {
+        if (woodMusicPlayer != null && !woodMusicPlayer!!.isPlaying) woodMusicPlayer?.start()
     }
 
     // --- SFX Methods ---
