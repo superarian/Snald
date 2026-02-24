@@ -10,9 +10,9 @@ import kotlinx.coroutines.launch
 
 class LudoViewModel : ViewModel() {
 
-    enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
+    // ADDED SETUP_BOTS
+    enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_BOTS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
-    // Added PlayerId to style the popup dynamically
     data class Announcement(val message: String, val type: AnnouncementType, val playerId: Int = -1)
 
     data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
@@ -50,9 +50,13 @@ class LudoViewModel : ViewModel() {
     val statsUpdate: LiveData<Unit> = _statsUpdate
 
     private val ruleEngine = LudoRuleEngine()
-    private var rankCounter = 0
-    private var tempPlayerCount = 2
+    private val botEngine = LudoBotEngine(ruleEngine) // INSTANTIATE BOT ENGINE
+
+    var tempPlayerCount = 2
+        private set
+    private var tempBotCount = 0
     private var currentTokenCount = 1
+    private var rankCounter = 0
     private var shouldGiveExtraTurn = false
     private val finishedPlayerIds = mutableSetOf<Int>()
     private var isGameAbandoned = false
@@ -85,42 +89,40 @@ class LudoViewModel : ViewModel() {
     }
 
     private fun spawnDynamicSafeZone() {
-        val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) +
-                LudoBoardConfig.PATH_GREEN.take(51) +
-                LudoBoardConfig.PATH_BLUE.take(51) +
-                LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
-
+        val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) + LudoBoardConfig.PATH_GREEN.take(51) + LudoBoardConfig.PATH_BLUE.take(51) + LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
         val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
-
         if (available.isNotEmpty()) {
             _dynamicSafeZone.value = available.random()
         }
     }
 
+    // Updated Navigation
     fun navigateBackInSetup(): Boolean {
         return when (_gameState.value) {
-            State.SETUP_TOKENS -> {
-                _gameState.value = State.SETUP_PLAYERS
-                true
-            }
-            State.SETUP_PLAYERS -> {
-                _gameState.value = State.SETUP_THEME
-                true
-            }
-            State.SETUP_THEME -> {
-                false
-            }
+            State.SETUP_TOKENS -> { _gameState.value = State.SETUP_BOTS; true }
+            State.SETUP_BOTS -> { _gameState.value = State.SETUP_PLAYERS; true }
+            State.SETUP_PLAYERS -> { _gameState.value = State.SETUP_THEME; true }
+            State.SETUP_THEME -> false
             else -> false
         }
     }
 
     fun selectTheme() { _gameState.value = State.SETUP_PLAYERS }
-    fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_TOKENS }
+    fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_BOTS }
+    fun selectBotCount(count: Int) { tempBotCount = count; _gameState.value = State.SETUP_TOKENS }
 
     fun startGame(tokenCount: Int) {
         currentTokenCount = tokenCount
         val colors = listOf("RED", "GREEN", "BLUE", "YELLOW")
-        val newPlayers = (0 until tempPlayerCount).map { LudoPlayer(it + 1, colors.get(it), currentTokenCount) }
+        val humanCount = tempPlayerCount - tempBotCount
+
+        // Brand the bots with a robot emoji
+        val newPlayers = (0 until tempPlayerCount).map { i ->
+            val isBot = i >= humanCount
+            val prefix = if (isBot) "🤖 " else ""
+            LudoPlayer(i + 1, "$prefix${colors[i]}", currentTokenCount, isBot = isBot)
+        }
+
         _players.value = newPlayers
         _activePlayerIndex.value = 0
         finishedPlayerIds.clear()
@@ -130,8 +132,9 @@ class LudoViewModel : ViewModel() {
         _dynamicSafeZone.value = null
 
         _gameState.value = State.WAITING_FOR_ROLL
-        _statusMessage.value = "${newPlayers.get(0).colorName}'s Turn"
+        _statusMessage.value = "${newPlayers[0].colorName}'s Turn"
         saveCurrentState()
+        triggerBotIfActive() // CHECK IF BOT GOES FIRST
     }
 
     private fun restoreGame() {
@@ -147,12 +150,24 @@ class LudoViewModel : ViewModel() {
         isGameAbandoned = false
         _timerSeconds.value = LudoGameStateHolder.timerSeconds
         _dynamicSafeZone.value = LudoGameStateHolder.dynamicSafeZone
+        triggerBotIfActive()
     }
 
     fun saveCurrentState() {
         if (isGameAbandoned) return
         val p = _players.value ?: return
         LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds, _timerSeconds.value ?: 30, _dynamicSafeZone.value)
+    }
+
+    // The Master Bot Trigger
+    private fun triggerBotIfActive() {
+        val p = _players.value?.get(_activePlayerIndex.value ?: 0) ?: return
+        if (p.isBot && _gameState.value == State.WAITING_FOR_ROLL) {
+            viewModelScope.launch {
+                delay(1200) // "Thinking" delay
+                rollDice()
+            }
+        }
     }
 
     fun rollDice() {
@@ -180,10 +195,17 @@ class LudoViewModel : ViewModel() {
             }
 
             if (valid.isNotEmpty()) {
-                if (valid.size == 1) onTokenClicked(valid.get(0))
-                else {
-                    _gameState.value = State.WAITING_FOR_MOVE
-                    _statusMessage.value = "Select Token"
+                if (valid.size == 1) {
+                    onTokenClicked(valid.get(0))
+                } else {
+                    if (p.isBot) {
+                        val bestMove = botEngine.getBestMove(pIdx, roll, _players.value!!, _dynamicSafeZone.value)
+                        delay(800) // Delay to simulate "deciding" which token to move
+                        if (bestMove != null) onTokenClicked(bestMove)
+                    } else {
+                        _gameState.value = State.WAITING_FOR_MOVE
+                        _statusMessage.value = "Select Token"
+                    }
                 }
             } else {
                 shouldGiveExtraTurn = false
@@ -211,53 +233,29 @@ class LudoViewModel : ViewModel() {
 
         when(res) {
             is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions.set(tIdx, res.newPosIndex)
-            is LudoRuleEngine.MoveResult.SafeZoneLanded -> {
-                p.tokenPositions.set(tIdx, res.newPosIndex)
-                sound = SoundType.SAFE
-            }
-            is LudoRuleEngine.MoveResult.SafeStack -> {
-                p.tokenPositions.set(tIdx, res.newPosIndex)
-                sound = SoundType.SAFE
-            }
+            is LudoRuleEngine.MoveResult.SafeZoneLanded -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
             is LudoRuleEngine.MoveResult.StarCollected -> {
-                p.tokenPositions.set(tIdx, res.newPosIndex)
-                sound = SoundType.STAR_COLLECT
-
-                pendingAnimationEndAction = {
-                    p.tokenShields.set(tIdx, true)
-                    _dynamicSafeZone.value = null
-                    _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL, p.id)
-                }
+                p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.STAR_COLLECT
+                pendingAnimationEndAction = { p.tokenShields.set(tIdx, true); _dynamicSafeZone.value = null; _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL, p.id) }
             }
             is LudoRuleEngine.MoveResult.ShieldBreak -> {
-                p.tokenPositions.set(tIdx, res.newPosIndex)
-                sound = SoundType.SHIELD_BREAK
-
-                pendingAnimationEndAction = {
-                    pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
-                    _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL, p.id)
-                }
+                p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SHIELD_BREAK
+                pendingAnimationEndAction = { pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false); _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL, p.id) }
             }
             is LudoRuleEngine.MoveResult.Kill -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
                 pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
                 pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
-                sound = SoundType.KILL
-                p.kills++
-                pList[res.victimPlayerIdx].deaths++
-                _statsUpdate.value = Unit
+                sound = SoundType.KILL; p.kills++; pList[res.victimPlayerIdx].deaths++; _statsUpdate.value = Unit
             }
             is LudoRuleEngine.MoveResult.Win -> {
-                p.tokenPositions.set(tIdx, 56)
-                sound = SoundType.WIN
-
+                p.tokenPositions.set(tIdx, 56); sound = SoundType.WIN
                 pendingAnimationEndAction = {
                     p.tokenShields.set(tIdx, false)
                     if (p.getFinishedCount() == currentTokenCount) {
-                        rankCounter++
-                        finishedPlayerIds.add(p.id)
-                        // Trigger final formatting with explicit player ID
+                        rankCounter++; finishedPlayerIds.add(p.id)
                         _announcement.value = Announcement("${p.colorName} RANK $rankCounter", AnnouncementType.PLAYER_VICTORY, p.id)
                     } else {
                         _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL, p.id)
@@ -266,7 +264,6 @@ class LudoViewModel : ViewModel() {
             }
             else -> {}
         }
-
         _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
     }
 
@@ -282,11 +279,7 @@ class LudoViewModel : ViewModel() {
         val activeCount = all.size - finishedPlayerIds.size
 
         if (activeCount <= 1) {
-            viewModelScope.launch {
-                delay(1000)
-                _gameState.value = State.GAME_OVER
-                _statusMessage.value = "GAME OVER"
-            }
+            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
             return
         }
 
@@ -295,6 +288,7 @@ class LudoViewModel : ViewModel() {
         } else if (shouldGiveExtraTurn) {
             _gameState.value = State.WAITING_FOR_ROLL
             _statusMessage.value = "Extra Turn!"
+            triggerBotIfActive() // BOT COMBO ROLLS
         } else {
             passTurn()
         }
@@ -306,48 +300,30 @@ class LudoViewModel : ViewModel() {
         val activeCount = all.size - finishedPlayerIds.size
 
         if (activeCount <= 1) {
-            viewModelScope.launch {
-                delay(1000)
-                _gameState.value = State.GAME_OVER
-                _statusMessage.value = "GAME OVER"
-            }
+            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
             return
         }
 
         var next = _activePlayerIndex.value!!
         var safety = 0
-        do {
-            next = (next + 1) % all.size
-            safety++
-        } while (finishedPlayerIds.contains(all.get(next).id) && safety < 10)
+        do { next = (next + 1) % all.size; safety++ } while (finishedPlayerIds.contains(all.get(next).id) && safety < 10)
 
         _activePlayerIndex.value = next
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${all.get(next).colorName}'s Turn"
         saveCurrentState()
+        triggerBotIfActive() // HAND OFF TO NEXT BOT
     }
 
-    fun quitGame() {
-        isGameAbandoned = true
-        LudoGameStateHolder.clear()
-    }
+    fun quitGame() { isGameAbandoned = true; LudoGameStateHolder.clear() }
 
     fun getFinalRankings(): List<Pair<String, LudoPlayer>> {
         val pList = _players.value ?: return emptyList()
         val rankings = mutableListOf<Pair<String, LudoPlayer>>()
-
         var rank = 1
-        for (id in finishedPlayerIds) {
-            val p = pList.find { it.id == id }
-            if (p != null) rankings.add(Pair("Rank $rank", p))
-            rank++
-        }
-
+        for (id in finishedPlayerIds) { val p = pList.find { it.id == id }; if (p != null) rankings.add(Pair("Rank $rank", p)); rank++ }
         val lastPlayer = pList.find { !finishedPlayerIds.contains(it.id) }
-        if (lastPlayer != null) {
-            rankings.add(Pair("Last", lastPlayer))
-        }
-
+        if (lastPlayer != null) rankings.add(Pair("Last", lastPlayer))
         return rankings
     }
 }

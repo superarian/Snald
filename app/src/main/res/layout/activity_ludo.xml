@@ -20,9 +20,7 @@
         app:layout_constraintEnd_toStartOf="@id/layout_ludo_p2">
         <ProgressBar android:id="@+id/progress_p1" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#FF0000" android:max="100"/>
         <ProgressBar android:id="@+id/progress_p2" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#00FF00" android:max="100"/>
-
         <ProgressBar android:id="@+id/progress_p3" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#00CED1" android:max="100" android:visibility="gone"/>
-
         <ProgressBar android:id="@+id/progress_p4" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#FFFF00" android:max="100" android:visibility="gone"/>
     </LinearLayout>
 
@@ -72,7 +70,6 @@
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
-
         <TextView android:text="P3" android:textColor="#00CED1" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <ImageView android:id="@+id/dice_p3" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
     </LinearLayout>
@@ -112,7 +109,6 @@
             <TextView android:text="MATCH STATS" android:textColor="#FFF" android:textStyle="bold" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="4dp"/>
             <TextView android:id="@+id/text_dash_p1" android:text="P1 ⚔️0 💀0 🎲0" android:textColor="#FF0000" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
             <TextView android:id="@+id/text_dash_p2" android:text="P2 ⚔️0 💀0 🎲0" android:textColor="#00FF00" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-
             <TextView android:id="@+id/text_dash_p3" android:text="P3 ⚔️0 💀0 🎲0" android:textColor="#00CED1" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone"/>
             <TextView android:id="@+id/text_dash_p4" android:text="P4 ⚔️0 💀0 🎲0" android:textColor="#FFFF00" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone"/>
         </LinearLayout>
@@ -255,10 +251,24 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:gravity="center">
+                android:gravity="center"
+                android:visibility="gone">
                 <Button android:id="@+id/btn_ludo_2p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
                 <Button android:id="@+id/btn_ludo_3p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="3 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
                 <Button android:id="@+id/btn_ludo_4p" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_bots"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_bots_0" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="0 BOTS (ALL HUMAN)" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_1" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="1 AI BOT" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_2" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 AI BOTS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_3" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="3 AI BOTS" android:textColor="#FFF" app:backgroundTint="@null" />
             </LinearLayout>
 
             <LinearLayout

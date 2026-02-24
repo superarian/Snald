@@ -8,7 +8,8 @@ data class LudoPlayer(
     val tokenShields: MutableList<Boolean> = MutableList(tokenCount) { false },
     var kills: Int = 0,
     var deaths: Int = 0,
-    var sixesRolled: Int = 0
+    var sixesRolled: Int = 0,
+    val isBot: Boolean = false // NEW FLAG FOR AI
 ) {
     fun getFinishedCount(): Int = tokenPositions.count { it == 56 }
     fun isTokenInBase(index: Int): Boolean = tokenPositions.get(index) == -1
