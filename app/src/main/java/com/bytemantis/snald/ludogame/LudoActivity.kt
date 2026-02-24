@@ -391,15 +391,21 @@ class LudoActivity : AppCompatActivity() {
             LudoViewModel.SoundType.SHIELD_BREAK -> soundManager.playStarUsed()
             else -> {}
         }
+
+        // OWNER FIX: Call onTurnAnimationsFinished BEFORE renderBoardState
+        // to ensure the UI paints the freshly updated shield/win states immediately.
         if (u.killInfo != null) {
             val victim = allTokenViews.get(u.killInfo.victimPlayerIdx).get(u.killInfo.victimTokenIdx)
             val base = getBaseCoord(u.killInfo.victimPlayerIdx, u.killInfo.victimTokenIdx)
             victim.animate().x(boardOffsetX + base.first * cellW - victim.width/2)
                 .y(boardOffsetY + base.second * cellH - victim.height/2)
-                .setDuration(500).withEndAction { renderBoardState(); viewModel.onTurnAnimationsFinished() }.start()
+                .setDuration(500).withEndAction {
+                    viewModel.onTurnAnimationsFinished()
+                    renderBoardState()
+                }.start()
         } else {
-            renderBoardState()
             viewModel.onTurnAnimationsFinished()
+            renderBoardState()
         }
     }
 
@@ -501,10 +507,17 @@ class LudoActivity : AppCompatActivity() {
 
     private fun clearBadges() { activeBadges.forEach { tokenOverlay.removeView(it) }; activeBadges.clear() }
 
+    // OWNER FIX: Updated to build a custom string dynamically showing ordered final rankings
     private fun showGameOverDialog() {
+        val rankings = viewModel.getFinalRankings()
+        val msg = StringBuilder()
+        rankings.forEach { (rank, player) ->
+            msg.append("$rank : ${player.colorName}\n")
+        }
+
         AlertDialog.Builder(this)
-            .setTitle("GAME OVER")
-            .setMessage("All winners have taken their spots!")
+            .setTitle("MATCH RESULTS")
+            .setMessage(msg.toString().trim())
             .setCancelable(false)
             .setPositiveButton("EXIT TO HUB") { _, _ -> viewModel.quitGame(); finish() }
             .show()

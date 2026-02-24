@@ -56,6 +56,9 @@ class LudoViewModel : ViewModel() {
     private var isGameAbandoned = false
     private var timerJob: Job? = null
 
+    // OWNER FIX: Event Queue for synchronization
+    private var pendingAnimationEndAction: (() -> Unit)? = null
+
     init {
         if (LudoGameStateHolder.hasActiveGame) restoreGame()
         else _gameState.value = State.SETUP_THEME
@@ -94,7 +97,6 @@ class LudoViewModel : ViewModel() {
         }
     }
 
-    // --- OWNER FIX: Robust Back Navigation ---
     fun navigateBackInSetup(): Boolean {
         return when (_gameState.value) {
             State.SETUP_TOKENS -> {
@@ -106,7 +108,7 @@ class LudoViewModel : ViewModel() {
                 true
             }
             State.SETUP_THEME -> {
-                false // Tell Activity to finish()
+                false
             }
             else -> false
         }
@@ -122,6 +124,7 @@ class LudoViewModel : ViewModel() {
         _players.value = newPlayers
         _activePlayerIndex.value = 0
         finishedPlayerIds.clear()
+        rankCounter = 0
         isGameAbandoned = false
         _timerSeconds.value = 30
         _dynamicSafeZone.value = null
@@ -218,19 +221,28 @@ class LudoViewModel : ViewModel() {
             }
             is LudoRuleEngine.MoveResult.StarCollected -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
-                p.tokenShields.set(tIdx, true)
-                _dynamicSafeZone.value = null
                 sound = SoundType.STAR_COLLECT
-                _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL)
+
+                // OWNER FIX: Delay shield logic until animation reaches the star
+                pendingAnimationEndAction = {
+                    p.tokenShields.set(tIdx, true)
+                    _dynamicSafeZone.value = null
+                    _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL)
+                }
             }
             is LudoRuleEngine.MoveResult.ShieldBreak -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
-                pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
                 sound = SoundType.SHIELD_BREAK
-                _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL)
+
+                // OWNER FIX: Delay shield break logic until animation completes
+                pendingAnimationEndAction = {
+                    pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
+                    _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL)
+                }
             }
             is LudoRuleEngine.MoveResult.Kill -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
+                // Kills must update immediately to allow the Activity to draw the slide-back animation
                 pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
                 pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
@@ -241,14 +253,18 @@ class LudoViewModel : ViewModel() {
             }
             is LudoRuleEngine.MoveResult.Win -> {
                 p.tokenPositions.set(tIdx, 56)
-                p.tokenShields.set(tIdx, false)
                 sound = SoundType.WIN
-                if (p.getFinishedCount() == currentTokenCount) {
-                    rankCounter++
-                    finishedPlayerIds.add(p.id)
-                    _announcement.value = Announcement("${p.colorName} TAKES SPOT #${rankCounter}!", AnnouncementType.PLAYER_VICTORY)
-                } else {
-                    _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL)
+
+                // OWNER FIX: Delay win announcement and logic until animation reaches 56
+                pendingAnimationEndAction = {
+                    p.tokenShields.set(tIdx, false)
+                    if (p.getFinishedCount() == currentTokenCount) {
+                        rankCounter++
+                        finishedPlayerIds.add(p.id)
+                        _announcement.value = Announcement("${p.colorName} TAKES SPOT #${rankCounter}!", AnnouncementType.PLAYER_VICTORY)
+                    } else {
+                        _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL)
+                    }
                 }
             }
             else -> {}
@@ -261,7 +277,24 @@ class LudoViewModel : ViewModel() {
 
     fun onTurnAnimationsFinished() {
         _turnUpdate.value = null
+
+        // OWNER FIX: Trigger pending logic perfectly in sync with visual arrival
+        pendingAnimationEndAction?.invoke()
+        pendingAnimationEndAction = null
+
         val p = _players.value!!.get(_activePlayerIndex.value!!)
+        val all = _players.value!!
+        val activeCount = all.size - finishedPlayerIds.size
+
+        // OWNER FIX: 1-Second delay after the final winner lands before triggering Game Over screen
+        if (activeCount <= 1) {
+            viewModelScope.launch {
+                delay(1000)
+                _gameState.value = State.GAME_OVER
+                _statusMessage.value = "GAME OVER"
+            }
+            return
+        }
 
         if (finishedPlayerIds.contains(p.id)) {
             passTurn()
@@ -279,8 +312,11 @@ class LudoViewModel : ViewModel() {
         val activeCount = all.size - finishedPlayerIds.size
 
         if (activeCount <= 1) {
-            _gameState.value = State.GAME_OVER
-            _statusMessage.value = "GAME OVER"
+            viewModelScope.launch {
+                delay(1000)
+                _gameState.value = State.GAME_OVER
+                _statusMessage.value = "GAME OVER"
+            }
             return
         }
 
@@ -300,5 +336,25 @@ class LudoViewModel : ViewModel() {
     fun quitGame() {
         isGameAbandoned = true
         LudoGameStateHolder.clear()
+    }
+
+    // OWNER FIX: Function to generate the structured ranking data for the UI
+    fun getFinalRankings(): List<Pair<String, LudoPlayer>> {
+        val pList = _players.value ?: return emptyList()
+        val rankings = mutableListOf<Pair<String, LudoPlayer>>()
+
+        var rank = 1
+        for (id in finishedPlayerIds) {
+            val p = pList.find { it.id == id }
+            if (p != null) rankings.add(Pair("Rank $rank", p))
+            rank++
+        }
+
+        val lastPlayer = pList.find { !finishedPlayerIds.contains(it.id) }
+        if (lastPlayer != null) {
+            rankings.add(Pair("Last", lastPlayer))
+        }
+
+        return rankings
     }
 }
