@@ -31,11 +31,17 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var tokenOverlay: FrameLayout
     private lateinit var starOverlay: FrameLayout
     private lateinit var victoryPopText: TextView
+
     private lateinit var setupLayout: LinearLayout
     private lateinit var setupTitle: TextView
     private lateinit var groupTheme: LinearLayout
     private lateinit var groupPlayers: LinearLayout
     private lateinit var groupTokens: LinearLayout
+
+    // 3D Game Over Screen Elements
+    private lateinit var gameOverLayoutLudo: LinearLayout
+    private lateinit var textRankings: TextView
+    private lateinit var btnLudoHub: Button
 
     private lateinit var layoutDashboard: LinearLayout
     private lateinit var textDashP1: TextView
@@ -47,7 +53,6 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var videoSetupTop: VideoView
     private lateinit var videoSetupBottom: VideoView
 
-    // TODO: Replace these with your actual 9 video file names!
     private val setupVideoResources = listOf(
         R.raw.random_bgm_1, R.raw.random_bgm_2, R.raw.random_bgm_3,
         R.raw.random_bgm_4, R.raw.random_bgm_5, R.raw.random_bgm_6,
@@ -84,8 +89,7 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                if (state == LudoViewModel.State.SETUP_THEME ||
-                    state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
+                if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_TOKENS) {
                     if (!viewModel.navigateBackInSetup()) {
                         finish()
                     }
@@ -112,11 +116,22 @@ class LudoActivity : AppCompatActivity() {
         tokenOverlay = findViewById(R.id.overlay_ludo_tokens)
         starOverlay = findViewById(R.id.overlay_ludo_stars)
         victoryPopText = findViewById(R.id.text_ludo_victory_pop)
+
         setupLayout = findViewById(R.id.layout_ludo_setup)
         setupTitle = findViewById(R.id.text_setup_title)
         groupTheme = findViewById(R.id.group_setup_theme)
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
+
+        // 3D Layout Components
+        gameOverLayoutLudo = findViewById(R.id.layout_game_over_ludo)
+        textRankings = findViewById(R.id.text_ludo_rankings)
+        btnLudoHub = findViewById(R.id.btn_ludo_hub)
+
+        btnLudoHub.setOnClickListener {
+            viewModel.quitGame()
+            finish()
+        }
 
         videoSetupTop = findViewById(R.id.video_setup_top)
         videoSetupBottom = findViewById(R.id.video_setup_bottom)
@@ -250,16 +265,19 @@ class LudoActivity : AppCompatActivity() {
             when(state) {
                 LudoViewModel.State.SETUP_THEME -> {
                     setupLayout.visibility = View.VISIBLE
+                    gameOverLayoutLudo.visibility = View.GONE
                     playRandomSetupVideos()
                     groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD"
                 }
                 LudoViewModel.State.SETUP_PLAYERS -> {
                     setupLayout.visibility = View.VISIBLE
+                    gameOverLayoutLudo.visibility = View.GONE
                     playRandomSetupVideos()
                     groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH"
                 }
                 LudoViewModel.State.SETUP_TOKENS -> {
                     setupLayout.visibility = View.VISIBLE
+                    gameOverLayoutLudo.visibility = View.GONE
                     playRandomSetupVideos()
                     groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH"
                 }
@@ -270,6 +288,7 @@ class LudoActivity : AppCompatActivity() {
                 }
                 else -> {
                     setupLayout.visibility = View.GONE
+                    gameOverLayoutLudo.visibility = View.GONE
                     stopSetupVideos()
                 }
             }
@@ -292,7 +311,14 @@ class LudoActivity : AppCompatActivity() {
         }
 
         viewModel.statusMessage.observe(this) { statusText.text = it }
-        viewModel.announcement.observe(this) { ann -> if (ann != null) { showDynamicAnnouncement(ann); viewModel.clearAnnouncement() } }
+
+        viewModel.announcement.observe(this) { ann ->
+            if (ann != null) {
+                showDynamicAnnouncement(ann)
+                viewModel.clearAnnouncement()
+            }
+        }
+
         viewModel.turnUpdate.observe(this) { if (it != null && isUiInitialized) playTurnSequence(it) }
         viewModel.statsUpdate.observe(this) { updateDashboardStats() }
 
@@ -337,6 +363,17 @@ class LudoActivity : AppCompatActivity() {
 
     private fun showDynamicAnnouncement(ann: LudoViewModel.Announcement) {
         victoryPopText.text = ann.message
+
+        // Dynamically style the text color based on the player ID, mapping 3 (Blue) to Turquoise
+        val color = when(ann.playerId) {
+            1 -> 0xFFFF0000.toInt() // Red
+            2 -> 0xFF00FF00.toInt() // Green
+            3 -> 0xFF00CED1.toInt() // Turquoise replacing Dark Blue
+            4 -> 0xFFFFFF00.toInt() // Yellow
+            else -> 0xFFFFFFFF.toInt() // White fallback
+        }
+        victoryPopText.setTextColor(color)
+
         victoryPopText.visibility = View.VISIBLE
         victoryPopText.alpha = 0f
 
@@ -392,8 +429,6 @@ class LudoActivity : AppCompatActivity() {
             else -> {}
         }
 
-        // OWNER FIX: Call onTurnAnimationsFinished BEFORE renderBoardState
-        // to ensure the UI paints the freshly updated shield/win states immediately.
         if (u.killInfo != null) {
             val victim = allTokenViews.get(u.killInfo.victimPlayerIdx).get(u.killInfo.victimTokenIdx)
             val base = getBaseCoord(u.killInfo.victimPlayerIdx, u.killInfo.victimTokenIdx)
@@ -507,20 +542,18 @@ class LudoActivity : AppCompatActivity() {
 
     private fun clearBadges() { activeBadges.forEach { tokenOverlay.removeView(it) }; activeBadges.clear() }
 
-    // OWNER FIX: Updated to build a custom string dynamically showing ordered final rankings
+    // Replaced standard AlertDialog with 3D UI Trigger
     private fun showGameOverDialog() {
         val rankings = viewModel.getFinalRankings()
         val msg = StringBuilder()
         rankings.forEach { (rank, player) ->
             msg.append("$rank : ${player.colorName}\n")
         }
+        textRankings.text = msg.toString().trim()
 
-        AlertDialog.Builder(this)
-            .setTitle("MATCH RESULTS")
-            .setMessage(msg.toString().trim())
-            .setCancelable(false)
-            .setPositiveButton("EXIT TO HUB") { _, _ -> viewModel.quitGame(); finish() }
-            .show()
+        gameOverLayoutLudo.visibility = View.VISIBLE
+        gameOverLayoutLudo.alpha = 0f
+        gameOverLayoutLudo.animate().alpha(1f).setDuration(500).start()
     }
 
     override fun onPause() {

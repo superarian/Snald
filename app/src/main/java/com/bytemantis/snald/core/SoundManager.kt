@@ -16,7 +16,7 @@ class SoundManager(private val context: Context) {
 
     // Background Music Players
     private var menuMusicPlayer: MediaPlayer? = null
-    private var neonMusicPlayer: MediaPlayer? = null // Renamed from ludoMusicPlayer
+    private var neonMusicPlayer: MediaPlayer? = null
     private var woodMusicPlayer: MediaPlayer? = null
     private var isMusicEnabled = true
 
@@ -50,19 +50,16 @@ class SoundManager(private val context: Context) {
     fun playMusicForTheme(themeResId: Int) {
         when (themeResId) {
             R.drawable.ludo_board -> {
-                // Classic Board: Use Menu Music
                 stopNeonMusic()
                 stopWoodMusic()
                 startMenuMusic()
             }
             R.drawable.ludo_board_neon -> {
-                // Neon Board: Use Neon Music
                 stopMenuMusic()
                 stopWoodMusic()
                 startNeonMusic()
             }
             R.drawable.ludo_board_wood -> {
-                // Wooden Board: Use Wood Music
                 stopMenuMusic()
                 stopNeonMusic()
                 startWoodMusic()
@@ -75,7 +72,6 @@ class SoundManager(private val context: Context) {
         }
     }
 
-    // --- Menu Music Control ---
     fun startMenuMusic() {
         if (!isMusicEnabled) return
         if (menuMusicPlayer == null) {
@@ -105,7 +101,6 @@ class SoundManager(private val context: Context) {
         if (menuMusicPlayer != null && !menuMusicPlayer!!.isPlaying) menuMusicPlayer?.start()
     }
 
-    // --- Neon Music Control ---
     fun startNeonMusic() {
         if (!isMusicEnabled) return
         if (neonMusicPlayer == null) {
@@ -135,7 +130,6 @@ class SoundManager(private val context: Context) {
         if (neonMusicPlayer != null && !neonMusicPlayer!!.isPlaying) neonMusicPlayer?.start()
     }
 
-    // --- Wood Music Control ---
     fun startWoodMusic() {
         if (!isMusicEnabled) return
         if (woodMusicPlayer == null) {
@@ -165,9 +159,11 @@ class SoundManager(private val context: Context) {
         if (woodMusicPlayer != null && !woodMusicPlayer!!.isPlaying) woodMusicPlayer?.start()
     }
 
-    // --- SFX Methods ---
-    fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll)
-    fun playHop(): Int = play(R.raw.sfx_hop)
+    // --- SFX Methods with Centralized Volume Mixing ---
+    fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll, 0.5f) // -50% Volume
+    fun playHop(): Int = play(R.raw.sfx_hop, 0.7f)            // -30% Volume
+    fun playSafeZone(): Int = play(R.raw.sfx_safe_zone, 0.8f) // -20% Volume
+
     fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
     fun playLadderClimb(): Int = play(R.raw.sfx_ladder_climb)
     fun playStarUsed(): Int = play(R.raw.sfx_star_use)
@@ -176,17 +172,17 @@ class SoundManager(private val context: Context) {
     fun playPacmanEntry(): Int = play(R.raw.sfx_pacman_entry)
     fun playPacmanMove(): Int = play(R.raw.sfx_pacman_move)
     fun playFastFlash(): Int = play(R.raw.sfx_fast_flash)
-    fun playSafeZone(): Int = play(R.raw.sfx_safe_zone)
 
     fun stop(streamId: Int) {
         if (streamId != 0) soundPool.stop(streamId)
     }
 
+    // Modified for -20% starting volume
     fun playStarCollect() {
         val soundId = soundMap.get(R.raw.sfx_star_collect)
         if (soundId == 0) return
-        val streamId = soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
-        val fadeAnim = ValueAnimator.ofFloat(1.0f, 0.0f)
+        val streamId = soundPool.play(soundId, 0.8f, 0.8f, 1, 0, 1.0f)
+        val fadeAnim = ValueAnimator.ofFloat(0.8f, 0.0f)
         fadeAnim.duration = 1500L
         fadeAnim.interpolator = LinearInterpolator()
         fadeAnim.addUpdateListener { animation ->
@@ -197,9 +193,10 @@ class SoundManager(private val context: Context) {
         fadeAnim.start()
     }
 
-    private fun play(resId: Int): Int {
+    // Upgraded internal play method to handle volume scaling
+    private fun play(resId: Int, volume: Float = 1.0f): Int {
         val soundId = soundMap.get(resId)
         if (soundId == 0) return 0
-        return soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
+        return soundPool.play(soundId, volume, volume, 1, 0, 1.0f)
     }
 }

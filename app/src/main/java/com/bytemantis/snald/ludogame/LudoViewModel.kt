@@ -12,7 +12,9 @@ class LudoViewModel : ViewModel() {
 
     enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
-    data class Announcement(val message: String, val type: AnnouncementType)
+    // Added PlayerId to style the popup dynamically
+    data class Announcement(val message: String, val type: AnnouncementType, val playerId: Int = -1)
+
     data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
     enum class SoundType { NONE, SAFE, KILL, WIN, STAR_COLLECT, SHIELD_BREAK }
     data class KillInfo(val victimPlayerIdx: Int, val victimTokenIdx: Int, val fromPos: Int)
@@ -55,8 +57,6 @@ class LudoViewModel : ViewModel() {
     private val finishedPlayerIds = mutableSetOf<Int>()
     private var isGameAbandoned = false
     private var timerJob: Job? = null
-
-    // OWNER FIX: Event Queue for synchronization
     private var pendingAnimationEndAction: (() -> Unit)? = null
 
     init {
@@ -223,26 +223,23 @@ class LudoViewModel : ViewModel() {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
                 sound = SoundType.STAR_COLLECT
 
-                // OWNER FIX: Delay shield logic until animation reaches the star
                 pendingAnimationEndAction = {
                     p.tokenShields.set(tIdx, true)
                     _dynamicSafeZone.value = null
-                    _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL)
+                    _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL, p.id)
                 }
             }
             is LudoRuleEngine.MoveResult.ShieldBreak -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
                 sound = SoundType.SHIELD_BREAK
 
-                // OWNER FIX: Delay shield break logic until animation completes
                 pendingAnimationEndAction = {
                     pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
-                    _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL)
+                    _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL, p.id)
                 }
             }
             is LudoRuleEngine.MoveResult.Kill -> {
                 p.tokenPositions.set(tIdx, res.newPosIndex)
-                // Kills must update immediately to allow the Activity to draw the slide-back animation
                 pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
                 pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
                 kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
@@ -255,15 +252,15 @@ class LudoViewModel : ViewModel() {
                 p.tokenPositions.set(tIdx, 56)
                 sound = SoundType.WIN
 
-                // OWNER FIX: Delay win announcement and logic until animation reaches 56
                 pendingAnimationEndAction = {
                     p.tokenShields.set(tIdx, false)
                     if (p.getFinishedCount() == currentTokenCount) {
                         rankCounter++
                         finishedPlayerIds.add(p.id)
-                        _announcement.value = Announcement("${p.colorName} TAKES SPOT #${rankCounter}!", AnnouncementType.PLAYER_VICTORY)
+                        // Trigger final formatting with explicit player ID
+                        _announcement.value = Announcement("${p.colorName} RANK $rankCounter", AnnouncementType.PLAYER_VICTORY, p.id)
                     } else {
-                        _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL)
+                        _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL, p.id)
                     }
                 }
             }
@@ -277,8 +274,6 @@ class LudoViewModel : ViewModel() {
 
     fun onTurnAnimationsFinished() {
         _turnUpdate.value = null
-
-        // OWNER FIX: Trigger pending logic perfectly in sync with visual arrival
         pendingAnimationEndAction?.invoke()
         pendingAnimationEndAction = null
 
@@ -286,7 +281,6 @@ class LudoViewModel : ViewModel() {
         val all = _players.value!!
         val activeCount = all.size - finishedPlayerIds.size
 
-        // OWNER FIX: 1-Second delay after the final winner lands before triggering Game Over screen
         if (activeCount <= 1) {
             viewModelScope.launch {
                 delay(1000)
@@ -338,7 +332,6 @@ class LudoViewModel : ViewModel() {
         LudoGameStateHolder.clear()
     }
 
-    // OWNER FIX: Function to generate the structured ranking data for the UI
     fun getFinalRankings(): List<Pair<String, LudoPlayer>> {
         val pList = _players.value ?: return emptyList()
         val rankings = mutableListOf<Pair<String, LudoPlayer>>()
