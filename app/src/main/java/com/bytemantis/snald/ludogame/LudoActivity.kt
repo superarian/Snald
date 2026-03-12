@@ -1,9 +1,13 @@
 package com.bytemantis.snald.ludogame
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
@@ -18,6 +22,7 @@ import com.bytemantis.snald.R
 import com.bytemantis.snald.core.SoundManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
 import kotlin.math.min
 
 class LudoActivity : AppCompatActivity() {
@@ -79,6 +84,12 @@ class LudoActivity : AppCompatActivity() {
 
     private val PREFS_NAME = "LudoPrefs"
     private val KEY_THEME = "SelectedTheme"
+
+    // --- PRO LOCK VARIABLES ---
+    private val PREF_IS_PRO = "is_pro_unlocked"
+    private val SECRET_SALT = "SNALD_MASTER_KEY_2026"
+    private val UPI_ID = "paytmqr2810050501011e876976d7ua@paytm"
+    private val TELEGRAM_BOT_URL = "https://t.me/SnaldBot" // TODO: Update this after creating the bot
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -174,9 +185,10 @@ class LudoActivity : AppCompatActivity() {
         btnBots2.setOnClickListener { viewModel.selectBotCount(2) }
         btnBots3.setOnClickListener { viewModel.selectBotCount(3) }
 
-        findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { viewModel.startGame(1) }
-        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { viewModel.startGame(2) }
-        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { viewModel.startGame(4) }
+        // --- PRO LOCK IMPLEMENTATION ---
+        findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { viewModel.startGame(1) } // 1 Token is always free
+        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { checkProAccessAndStart(2) }
+        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { checkProAccessAndStart(4) }
 
         boardImage.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
@@ -203,6 +215,73 @@ class LudoActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun checkProAccessAndStart(tokenCount: Int) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val isPro = prefs.getBoolean(PREF_IS_PRO, false)
+
+        if (isPro) {
+            viewModel.startGame(tokenCount)
+        } else {
+            showProUnlockDialog(tokenCount)
+        }
+    }
+
+    private fun showProUnlockDialog(pendingTokenCount: Int) {
+        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_DEVICE"
+        val expectedCode = generateUnlockCode(deviceId)
+
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Unlock PRO Mode \uD83D\uDD12")
+
+        val message = "Unlock 2 & 4 Token modes for just Rs. 149/-\n\n" +
+                "1. Copy UPI ID & Pay.\n" +
+                "2. Send screenshot + Device ID to our Telegram Bot.\n" +
+                "3. Enter the Unlock Code below.\n\n" +
+                "Device ID: $deviceId"
+
+        builder.setMessage(message)
+
+        val input = EditText(this)
+        input.hint = "Enter Telegram Unlock Code"
+        builder.setView(input)
+
+        builder.setPositiveButton("Unlock") { _, _ ->
+            val userInput = input.text.toString().trim().uppercase()
+            if (userInput == expectedCode) {
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PRO, true).apply()
+                Toast.makeText(this, "PRO Unlocked! Enjoy \uD83C\uDF89", Toast.LENGTH_LONG).show()
+                viewModel.startGame(pendingTokenCount)
+            } else {
+                Toast.makeText(this, "Invalid Code. Try again.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        builder.setNeutralButton("Copy UPI") { _, _ ->
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("UPI ID", UPI_ID)
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(this, "UPI ID Copied!", Toast.LENGTH_SHORT).show()
+        }
+
+        builder.setNegativeButton("Open Telegram") { _, _ ->
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_BOT_URL))
+            try {
+                startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Telegram app not found.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        builder.show()
+    }
+
+    private fun generateUnlockCode(deviceId: String): String {
+        val input = deviceId + SECRET_SALT
+        val md = MessageDigest.getInstance("MD5")
+        val hashBytes = md.digest(input.toByteArray())
+        return hashBytes.joinToString("") { "%02x".format(it) }.take(6).uppercase()
     }
 
     private fun playRandomSetupVideos() {
@@ -283,7 +362,6 @@ class LudoActivity : AppCompatActivity() {
                 LudoViewModel.State.SETUP_BOTS -> {
                     setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
                     groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "ADD AI BOTS?"
-
                     val total = viewModel.tempPlayerCount
                     btnBots1.visibility = if (total >= 2) View.VISIBLE else View.GONE
                     btnBots2.visibility = if (total >= 3) View.VISIBLE else View.GONE
@@ -341,10 +419,10 @@ class LudoActivity : AppCompatActivity() {
     private fun updateDashboardStats() {
         val players = viewModel.players.value ?: return
 
-        if (players.size > 0) { textDashP1.visibility = View.VISIBLE; textDashP1.text = "P1 ⚔️${players[0].kills}  💀${players[0].deaths}  🎲${players[0].sixesRolled}" } else { textDashP1.visibility = View.GONE }
-        if (players.size > 1) { textDashP2.visibility = View.VISIBLE; textDashP2.text = "P2 ⚔️${players[1].kills}  💀${players[1].deaths}  🎲${players[1].sixesRolled}" } else { textDashP2.visibility = View.GONE }
-        if (players.size > 2) { textDashP3.visibility = View.VISIBLE; textDashP3.text = "P3 ⚔️${players[2].kills}  💀${players[2].deaths}  🎲${players[2].sixesRolled}" } else { textDashP3.visibility = View.GONE }
-        if (players.size > 3) { textDashP4.visibility = View.VISIBLE; textDashP4.text = "P4 ⚔️${players[3].kills}  💀${players[3].deaths}  🎲${players[3].sixesRolled}" } else { textDashP4.visibility = View.GONE }
+        if (players.size > 0) { textDashP1.visibility = View.VISIBLE; textDashP1.text = "P1 \u2694\uFE0F${players[0].kills}  \uD83D\uDC80${players[0].deaths}  \uD83C\uDFB2${players[0].sixesRolled}" } else { textDashP1.visibility = View.GONE }
+        if (players.size > 1) { textDashP2.visibility = View.VISIBLE; textDashP2.text = "P2 \u2694\uFE0F${players[1].kills}  \uD83D\uDC80${players[1].deaths}  \uD83C\uDFB2${players[1].sixesRolled}" } else { textDashP2.visibility = View.GONE }
+        if (players.size > 2) { textDashP3.visibility = View.VISIBLE; textDashP3.text = "P3 \u2694\uFE0F${players[2].kills}  \uD83D\uDC80${players[2].deaths}  \uD83C\uDFB2${players[2].sixesRolled}" } else { textDashP3.visibility = View.GONE }
+        if (players.size > 3) { textDashP4.visibility = View.VISIBLE; textDashP4.text = "P4 \u2694\uFE0F${players[3].kills}  \uD83D\uDC80${players[3].deaths}  \uD83C\uDFB2${players[3].sixesRolled}" } else { textDashP4.visibility = View.GONE }
     }
 
     private fun renderDynamicSafeZone(coord: Pair<Int, Int>?) {
@@ -522,7 +600,6 @@ class LudoActivity : AppCompatActivity() {
                 val t = ImageView(this).apply {
                     setImageResource(res.get(i)); layoutParams = FrameLayout.LayoutParams((cellW * 0.8f).toInt(), (cellW * 0.8f).toInt())
                     setOnClickListener {
-                        // Token clicking is protected at the ViewModel level during bot turns
                         if (viewModel.activePlayerIndex.value == i) viewModel.onTokenClicked(tIdx)
                     }
                 }
