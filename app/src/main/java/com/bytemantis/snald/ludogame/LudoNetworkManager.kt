@@ -59,6 +59,20 @@ class LudoNetworkManager {
             }
     }
 
+    fun getJoinedPlayersCount(onComplete: (Int) -> Unit) {
+        val roomId = currentRoomId ?: return onComplete(0)
+        db.collection("rooms").document(roomId)
+            .collection("actions")
+            .whereEqualTo("type", "PLAYER_JOINED")
+            .get()
+            .addOnSuccessListener { snapshots ->
+                onComplete(snapshots.size())
+            }
+            .addOnFailureListener {
+                onComplete(0)
+            }
+    }
+
     fun pushAction(type: String, playerId: Int, value: Int) {
         val roomId = currentRoomId ?: return
         val actionId = UUID.randomUUID().toString()

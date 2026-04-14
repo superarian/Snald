@@ -137,17 +137,20 @@ class LudoViewModel : ViewModel() {
 
     fun joinMultiplayerGame(roomId: String) {
         isMultiplayer = true
-        localPlayerId = 1
         _statusMessage.value = "Joining..."
         networkManager.joinPrivateRoom(roomId) { success, roomInfo ->
             if (success && roomInfo != null) {
                 _roomCode.value = roomId
                 tempPlayerCount = roomInfo.playerCount
                 currentTokenCount = roomInfo.tokenCount
-                _statusMessage.value = "Joined! Waiting for Host to start..."
-                setupNetworkListener()
-
-                networkManager.pushAction("PLAYER_JOINED", localPlayerId, 0)
+                
+                // Fetch existing joiners to determine localPlayerId
+                networkManager.getJoinedPlayersCount { count ->
+                    localPlayerId = count + 1 // Host is 0, first joiner is 1, etc.
+                    _statusMessage.value = "Joined as Player ${localPlayerId + 1}! Waiting for Host..."
+                    setupNetworkListener()
+                    networkManager.pushAction("PLAYER_JOINED", localPlayerId, 0)
+                }
             } else {
                 _statusMessage.value = "Invalid Room Code."
             }
@@ -282,7 +285,6 @@ class LudoViewModel : ViewModel() {
         if (!isLocalControl(pIdx)) return
 
         _gameState.value = State.ANIMATING
-        shouldGiveExtraTurn = false
         val roll = (1..6).random()
 
         if (isMultiplayer) {
@@ -295,6 +297,7 @@ class LudoViewModel : ViewModel() {
     private fun executeRollDice(roll: Int, pIdx: Int) {
         _gameState.value = State.ANIMATING
         _diceValue.value = roll
+        shouldGiveExtraTurn = false
 
         val pList = _players.value!!
         val p = pList[pIdx]
