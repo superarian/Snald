@@ -131,6 +131,20 @@ class LudoNetworkManager {
         currentRoomId = null
     }
 
+    fun deleteRoom(onComplete: (Boolean) -> Unit) {
+        val roomId = currentRoomId ?: return onComplete(false)
+        
+        // In a real production app, you would use a Cloud Function to delete subcollections recursively.
+        // For now, we will delete the main room document.
+        db.collection("rooms").document(roomId).delete()
+            .addOnSuccessListener {
+                onComplete(true)
+            }
+            .addOnFailureListener {
+                onComplete(false)
+            }
+    }
+
     private fun generateRoomCode(): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         return (1..6).map { chars.random() }.joinToString("")

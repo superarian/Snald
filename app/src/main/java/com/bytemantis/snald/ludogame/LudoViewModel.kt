@@ -1,5 +1,6 @@
 package com.bytemantis.snald.ludogame
 
+import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -105,7 +106,13 @@ class LudoViewModel : ViewModel() {
         val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) + LudoBoardConfig.PATH_GREEN.take(51) + LudoBoardConfig.PATH_BLUE.take(51) + LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
         val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
         if (available.isNotEmpty()) {
-            _dynamicSafeZone.value = available.random()
+            val zone = available.random()
+            if (isMultiplayer) {
+                // Encode coordinate (x, y) as x * 15 + y
+                networkManager.pushAction("SPAWN_STAR", localPlayerId, zone.first * 15 + zone.second)
+            } else {
+                _dynamicSafeZone.value = zone
+            }
         }
     }
 
@@ -180,6 +187,11 @@ class LudoViewModel : ViewModel() {
             "ROLL_DICE" -> executeRollDice(action.value, action.playerId)
             "MOVE_TOKEN" -> executeTokenMove(action.value, action.playerId)
             "PASS_TURN" -> executePassTurn(action.playerId)
+            "SPAWN_STAR" -> {
+                val x = action.value / 15
+                val y = action.value % 15
+                _dynamicSafeZone.value = Pair(x, y)
+            }
         }
     }
 
@@ -429,7 +441,16 @@ class LudoViewModel : ViewModel() {
         val activeCount = all.size - finishedPlayerIds.size
 
         if (activeCount <= 1) {
-            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
+            viewModelScope.launch { 
+                delay(1000)
+                _gameState.value = State.GAME_OVER
+                _statusMessage.value = "GAME OVER"
+                if (isMultiplayer && localPlayerId == 0) {
+                    networkManager.deleteRoom { success ->
+                        if (success) Log.d("LudoViewModel", "Room deleted successfully")
+                    }
+                }
+            }
             return
         }
 
@@ -450,7 +471,16 @@ class LudoViewModel : ViewModel() {
         val activeCount = all.size - finishedPlayerIds.size
 
         if (activeCount <= 1) {
-            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
+            viewModelScope.launch { 
+                delay(1000)
+                _gameState.value = State.GAME_OVER
+                _statusMessage.value = "GAME OVER"
+                if (isMultiplayer && localPlayerId == 0) {
+                    networkManager.deleteRoom { success ->
+                        if (success) Log.d("LudoViewModel", "Room deleted successfully")
+                    }
+                }
+            }
             return
         }
 
@@ -467,7 +497,14 @@ class LudoViewModel : ViewModel() {
 
     fun quitGame() {
         isGameAbandoned = true
-        if (isMultiplayer) networkManager.stopListening()
+        if (isMultiplayer) {
+            if (localPlayerId == 0) {
+                networkManager.deleteRoom { success ->
+                    if (success) Log.d("LudoViewModel", "Host deleted room on quit")
+                }
+            }
+            networkManager.stopListening()
+        }
         LudoGameStateHolder.clear()
     }
 
