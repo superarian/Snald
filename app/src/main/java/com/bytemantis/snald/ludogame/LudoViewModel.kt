@@ -10,8 +10,8 @@ import kotlinx.coroutines.launch
 
 class LudoViewModel : ViewModel() {
 
-    // ADDED SETUP_BOTS
     enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_BOTS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
+
     enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
     data class Announcement(val message: String, val type: AnnouncementType, val playerId: Int = -1)
 
@@ -49,14 +49,24 @@ class LudoViewModel : ViewModel() {
     private val _statsUpdate = MutableLiveData<Unit>()
     val statsUpdate: LiveData<Unit> = _statsUpdate
 
+    // --- NETWORK VARIABLES ---
+    val networkManager = LudoNetworkManager()
+    var isMultiplayer = false
+    var localPlayerId = 0 // 0 for Host, 1 for Joiner
+    private var connectedHumans = 1
+
+    private val _roomCode = MutableLiveData<String>("")
+    val roomCode: LiveData<String> = _roomCode
+
     private val ruleEngine = LudoRuleEngine()
-    private val botEngine = LudoBotEngine(ruleEngine) // INSTANTIATE BOT ENGINE
+    private val botEngine = LudoBotEngine(ruleEngine)
 
     var tempPlayerCount = 2
         private set
     private var tempBotCount = 0
     private var currentTokenCount = 1
     private var rankCounter = 0
+
     private var shouldGiveExtraTurn = false
     private val finishedPlayerIds = mutableSetOf<Int>()
     private var isGameAbandoned = false
@@ -89,6 +99,9 @@ class LudoViewModel : ViewModel() {
     }
 
     private fun spawnDynamicSafeZone() {
+        // Only the host generates random safe zones in multiplayer to prevent desync
+        if (isMultiplayer && localPlayerId != 0) return
+
         val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) + LudoBoardConfig.PATH_GREEN.take(51) + LudoBoardConfig.PATH_BLUE.take(51) + LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
         val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
         if (available.isNotEmpty()) {
@@ -96,7 +109,85 @@ class LudoViewModel : ViewModel() {
         }
     }
 
-    // Updated Navigation
+    // --- NETWORK LOBBY LOGIC ---
+
+    fun hostMultiplayerGame(playerCount: Int, tokenCount: Int) {
+        isMultiplayer = true
+        localPlayerId = 0
+        currentTokenCount = tokenCount
+        connectedHumans = 1
+        val targetHumans = tempPlayerCount - tempBotCount
+
+        _statusMessage.value = "Creating Room..."
+        networkManager.createPrivateRoom(playerCount, tokenCount) { roomId ->
+            if (roomId != null) {
+                _roomCode.value = roomId
+                setupNetworkListener()
+
+                if (connectedHumans >= targetHumans) {
+                    networkManager.pushAction("START_MATCH", 0, currentTokenCount)
+                } else {
+                    _statusMessage.value = "Room: $roomId - Waiting for players..."
+                }
+            } else {
+                _statusMessage.value = "Failed to create room."
+            }
+        }
+    }
+
+    fun joinMultiplayerGame(roomId: String) {
+        isMultiplayer = true
+        localPlayerId = 1
+        _statusMessage.value = "Joining..."
+        networkManager.joinPrivateRoom(roomId) { success, roomInfo ->
+            if (success && roomInfo != null) {
+                _roomCode.value = roomId
+                tempPlayerCount = roomInfo.playerCount
+                currentTokenCount = roomInfo.tokenCount
+                _statusMessage.value = "Joined! Waiting for Host to start..."
+                setupNetworkListener()
+
+                networkManager.pushAction("PLAYER_JOINED", localPlayerId, 0)
+            } else {
+                _statusMessage.value = "Invalid Room Code."
+            }
+        }
+    }
+
+    private fun setupNetworkListener() {
+        networkManager.startListeningForActions { action ->
+            processNetworkAction(action)
+        }
+    }
+
+    private fun processNetworkAction(action: LudoAction) {
+        when (action.type) {
+            "PLAYER_JOINED" -> {
+                if (localPlayerId == 0) {
+                    connectedHumans++
+                    val targetHumans = tempPlayerCount - tempBotCount
+                    if (connectedHumans >= targetHumans) {
+                        networkManager.pushAction("START_MATCH", 0, currentTokenCount)
+                    } else {
+                        _statusMessage.value = "Players Joined: $connectedHumans / $targetHumans"
+                    }
+                }
+            }
+            "START_MATCH" -> executeStartGame(action.value)
+            "ROLL_DICE" -> executeRollDice(action.value, action.playerId)
+            "MOVE_TOKEN" -> executeTokenMove(action.value, action.playerId)
+            "PASS_TURN" -> executePassTurn(action.playerId)
+        }
+    }
+
+    private fun isLocalControl(pIdx: Int): Boolean {
+        if (!isMultiplayer) return true
+        val p = _players.value?.get(pIdx) ?: return false
+        if (p.isBot && localPlayerId == 0) return true
+        return pIdx == localPlayerId
+    }
+
+    // Navigation
     fun navigateBackInSetup(): Boolean {
         return when (_gameState.value) {
             State.SETUP_TOKENS -> { _gameState.value = State.SETUP_BOTS; true }
@@ -111,12 +202,23 @@ class LudoViewModel : ViewModel() {
     fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_BOTS }
     fun selectBotCount(count: Int) { tempBotCount = count; _gameState.value = State.SETUP_TOKENS }
 
+    // --- GAME START LOGIC ---
+
     fun startGame(tokenCount: Int) {
+        if (isMultiplayer) {
+            if (localPlayerId == 0) {
+                networkManager.pushAction("START_MATCH", 0, tokenCount)
+            }
+        } else {
+            executeStartGame(tokenCount)
+        }
+    }
+
+    private fun executeStartGame(tokenCount: Int) {
         currentTokenCount = tokenCount
         val colors = listOf("RED", "GREEN", "BLUE", "YELLOW")
         val humanCount = tempPlayerCount - tempBotCount
 
-        // Brand the bots with a robot emoji
         val newPlayers = (0 until tempPlayerCount).map { i ->
             val isBot = i >= humanCount
             val prefix = if (isBot) "🤖 " else ""
@@ -134,7 +236,7 @@ class LudoViewModel : ViewModel() {
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${newPlayers[0].colorName}'s Turn"
         saveCurrentState()
-        triggerBotIfActive() // CHECK IF BOT GOES FIRST
+        triggerBotIfActive()
     }
 
     private fun restoreGame() {
@@ -159,26 +261,41 @@ class LudoViewModel : ViewModel() {
         LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds, _timerSeconds.value ?: 30, _dynamicSafeZone.value)
     }
 
-    // The Master Bot Trigger
     private fun triggerBotIfActive() {
         val p = _players.value?.get(_activePlayerIndex.value ?: 0) ?: return
         if (p.isBot && _gameState.value == State.WAITING_FOR_ROLL) {
-            viewModelScope.launch {
-                delay(1200) // "Thinking" delay
-                rollDice()
+            if (isLocalControl(p.id - 1)) {
+                viewModelScope.launch {
+                    delay(1200)
+                    rollDice()
+                }
             }
         }
     }
 
+    // --- DICE ROLL LOGIC ---
+
     fun rollDice() {
         if (_gameState.value != State.WAITING_FOR_ROLL) return
+        val pIdx = _activePlayerIndex.value!!
+
+        if (!isLocalControl(pIdx)) return
+
         _gameState.value = State.ANIMATING
         shouldGiveExtraTurn = false
-
         val roll = (1..6).random()
+
+        if (isMultiplayer) {
+            networkManager.pushAction("ROLL_DICE", pIdx, roll)
+        } else {
+            executeRollDice(roll, pIdx)
+        }
+    }
+
+    private fun executeRollDice(roll: Int, pIdx: Int) {
+        _gameState.value = State.ANIMATING
         _diceValue.value = roll
 
-        val pIdx = _activePlayerIndex.value!!
         val pList = _players.value!!
         val p = pList[pIdx]
 
@@ -188,43 +305,66 @@ class LudoViewModel : ViewModel() {
             _statsUpdate.value = Unit
         }
 
-        viewModelScope.launch {
-            delay(600)
-            val valid = (0 until currentTokenCount).filter {
-                ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!, _dynamicSafeZone.value) !is LudoRuleEngine.MoveResult.Invalid
-            }
+        if (isLocalControl(pIdx)) {
+            viewModelScope.launch {
+                delay(600)
+                val valid = (0 until currentTokenCount).filter {
+                    ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!, _dynamicSafeZone.value) !is LudoRuleEngine.MoveResult.Invalid
+                }
 
-            if (valid.isNotEmpty()) {
-                if (valid.size == 1) {
-                    onTokenClicked(valid.get(0))
-                } else {
-                    if (p.isBot) {
-                        val bestMove = botEngine.getBestMove(pIdx, roll, _players.value!!, _dynamicSafeZone.value)
-                        delay(800) // Delay to simulate "deciding" which token to move
-                        if (bestMove != null) onTokenClicked(bestMove)
+                if (valid.isNotEmpty()) {
+                    if (valid.size == 1) {
+                        onTokenClicked(valid.get(0))
                     } else {
-                        _gameState.value = State.WAITING_FOR_MOVE
-                        _statusMessage.value = "Select Token"
+                        if (p.isBot) {
+                            val bestMove = botEngine.getBestMove(pIdx, roll, _players.value!!, _dynamicSafeZone.value)
+                            delay(800)
+                            if (bestMove != null) onTokenClicked(bestMove)
+                        } else {
+                            _gameState.value = State.WAITING_FOR_MOVE
+                            _statusMessage.value = "Select Token"
+                        }
+                    }
+                } else {
+                    shouldGiveExtraTurn = false
+                    delay(800)
+                    if (isMultiplayer) {
+                        networkManager.pushAction("PASS_TURN", pIdx, 0)
+                    } else {
+                        executePassTurn(pIdx)
                     }
                 }
-            } else {
-                shouldGiveExtraTurn = false
-                delay(800)
-                passTurn()
             }
+        } else {
+            // Remote watcher ignores local delays and awaits network explicit commands
+            _gameState.value = State.ANIMATING
+            _statusMessage.value = "Waiting for ${p.colorName}..."
         }
     }
+
+    // --- TOKEN MOVE & PASS LOGIC ---
 
     fun onTokenClicked(tIdx: Int) {
         if (_gameState.value != State.WAITING_FOR_MOVE && _gameState.value != State.ANIMATING) return
         val pIdx = _activePlayerIndex.value!!
+
+        if (!isLocalControl(pIdx)) return
+
+        if (isMultiplayer) {
+            networkManager.pushAction("MOVE_TOKEN", pIdx, tIdx)
+        } else {
+            executeTokenMove(tIdx, pIdx)
+        }
+    }
+
+    private fun executeTokenMove(tIdx: Int, pIdx: Int) {
+        _gameState.value = State.ANIMATING
         val pList = _players.value!!
         val p = pList[pIdx]
         val roll = _diceValue.value!!
         val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions.get(tIdx), roll, pList, _dynamicSafeZone.value)
 
         if (res is LudoRuleEngine.MoveResult.Invalid) return
-        _gameState.value = State.ANIMATING
         if (res.givesExtraTurn) shouldGiveExtraTurn = true
 
         val isSpawn = p.tokenPositions.get(tIdx) == -1
@@ -267,6 +407,13 @@ class LudoViewModel : ViewModel() {
         _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
     }
 
+    private fun executePassTurn(pIdx: Int) {
+        shouldGiveExtraTurn = false
+        passTurn()
+    }
+
+    // --- TURN FINISHING & CLEANUP ---
+
     fun clearAnnouncement() { _announcement.value = null }
 
     fun onTurnAnimationsFinished() {
@@ -288,7 +435,7 @@ class LudoViewModel : ViewModel() {
         } else if (shouldGiveExtraTurn) {
             _gameState.value = State.WAITING_FOR_ROLL
             _statusMessage.value = "Extra Turn!"
-            triggerBotIfActive() // BOT COMBO ROLLS
+            triggerBotIfActive()
         } else {
             passTurn()
         }
@@ -312,10 +459,14 @@ class LudoViewModel : ViewModel() {
         _gameState.value = State.WAITING_FOR_ROLL
         _statusMessage.value = "${all.get(next).colorName}'s Turn"
         saveCurrentState()
-        triggerBotIfActive() // HAND OFF TO NEXT BOT
+        triggerBotIfActive()
     }
 
-    fun quitGame() { isGameAbandoned = true; LudoGameStateHolder.clear() }
+    fun quitGame() {
+        isGameAbandoned = true
+        if (isMultiplayer) networkManager.stopListening()
+        LudoGameStateHolder.clear()
+    }
 
     fun getFinalRankings(): List<Pair<String, LudoPlayer>> {
         val pList = _players.value ?: return emptyList()

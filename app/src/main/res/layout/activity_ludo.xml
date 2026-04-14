@@ -7,6 +7,23 @@
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
+    <TextView
+        android:id="@+id/text_room_code_display"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#FFD700"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:background="#AA000000"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="8dp"
+        android:elevation="15dp"/>
+
     <LinearLayout
         android:id="@+id/layout_strategy_bar"
         android:layout_width="0dp"
@@ -233,6 +250,29 @@
                 android:textSize="36sp"
                 android:textStyle="bold"
                 android:layout_marginBottom="50dp"/>
+
+            <LinearLayout
+                android:id="@+id/group_setup_mode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_mode_local" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="LOCAL MATCH" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_mode_host" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="HOST ONLINE GAME" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_mode_join" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="JOIN ONLINE GAME" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_join"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <EditText android:id="@+id/edit_room_code" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:hint="ENTER 6-DIGIT CODE" android:textColorHint="#88FFFFFF" android:textColor="#FFF" android:gravity="center" android:textAllCaps="true" android:maxLength="6" android:maxLines="1" />
+                <Button android:id="@+id/btn_join_room" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="JOIN ROOM" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/group_setup_theme"

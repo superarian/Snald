@@ -1,13 +1,9 @@
 package com.bytemantis.snald.ludogame
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
@@ -22,7 +18,6 @@ import com.bytemantis.snald.R
 import com.bytemantis.snald.core.SoundManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.security.MessageDigest
 import kotlin.math.min
 
 class LudoActivity : AppCompatActivity() {
@@ -42,6 +37,11 @@ class LudoActivity : AppCompatActivity() {
     private lateinit var groupTheme: LinearLayout
     private lateinit var groupPlayers: LinearLayout
     private lateinit var groupTokens: LinearLayout
+
+    private lateinit var groupMode: LinearLayout
+    private lateinit var groupJoin: LinearLayout
+    private lateinit var editRoomCode: EditText
+    private lateinit var textRoomCodeDisplay: TextView
 
     private lateinit var groupBots: LinearLayout
     private lateinit var btnBots0: Button
@@ -82,14 +82,10 @@ class LudoActivity : AppCompatActivity() {
     private var boardOffsetY = 0f
     private var isUiInitialized = false
 
+    private var currentSetupMode = "NONE" // NONE, LOCAL, HOST, JOIN
+
     private val PREFS_NAME = "LudoPrefs"
     private val KEY_THEME = "SelectedTheme"
-
-    // --- PRO LOCK VARIABLES ---
-    private val PREF_IS_PRO = "is_pro_unlocked"
-    private val SECRET_SALT = "SNALD_MASTER_KEY_2026"
-    private val UPI_ID = "paytmqr2810050501011e876976d7ua@paytm"
-    private val TELEGRAM_BOT_URL = "https://t.me/SnaldBot" // TODO: Update this after creating the bot
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,7 +101,13 @@ class LudoActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val state = viewModel.gameState.value
-                if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) {
+                if (state == LudoViewModel.State.SETUP_PLAYERS && currentSetupMode != "NONE") {
+                    currentSetupMode = "NONE"
+                    groupMode.visibility = View.VISIBLE
+                    groupPlayers.visibility = View.GONE
+                    groupJoin.visibility = View.GONE
+                    setupTitle.text = "LUDO MATCH"
+                } else if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) {
                     if (!viewModel.navigateBackInSetup()) {
                         finish()
                     }
@@ -138,6 +140,11 @@ class LudoActivity : AppCompatActivity() {
         groupTheme = findViewById(R.id.group_setup_theme)
         groupPlayers = findViewById(R.id.group_setup_players)
         groupTokens = findViewById(R.id.group_setup_tokens)
+
+        groupMode = findViewById(R.id.group_setup_mode)
+        groupJoin = findViewById(R.id.group_setup_join)
+        editRoomCode = findViewById(R.id.edit_room_code)
+        textRoomCodeDisplay = findViewById(R.id.text_room_code_display)
 
         groupBots = findViewById(R.id.group_setup_bots)
         btnBots0 = findViewById(R.id.btn_bots_0)
@@ -176,6 +183,35 @@ class LudoActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_theme_wood).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_wood) }
         findViewById<Button>(R.id.btn_theme_neon).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_neon) }
 
+        // Mode Selection
+        findViewById<Button>(R.id.btn_mode_local).setOnClickListener {
+            currentSetupMode = "LOCAL"
+            viewModel.isMultiplayer = false
+            groupMode.visibility = View.GONE
+            groupPlayers.visibility = View.VISIBLE
+        }
+        findViewById<Button>(R.id.btn_mode_host).setOnClickListener {
+            currentSetupMode = "HOST"
+            groupMode.visibility = View.GONE
+            groupPlayers.visibility = View.VISIBLE
+        }
+        findViewById<Button>(R.id.btn_mode_join).setOnClickListener {
+            currentSetupMode = "JOIN"
+            groupMode.visibility = View.GONE
+            groupJoin.visibility = View.VISIBLE
+        }
+
+        findViewById<Button>(R.id.btn_join_room).setOnClickListener {
+            val code = editRoomCode.text.toString().trim()
+            if (code.length == 6) {
+                viewModel.joinMultiplayerGame(code)
+                setupTitle.text = "JOINING..."
+                groupJoin.visibility = View.GONE
+            } else {
+                Toast.makeText(this, "Enter 6-digit code", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         findViewById<Button>(R.id.btn_ludo_2p).setOnClickListener { viewModel.selectPlayerCount(2) }
         findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.selectPlayerCount(3) }
         findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.selectPlayerCount(4) }
@@ -185,10 +221,9 @@ class LudoActivity : AppCompatActivity() {
         btnBots2.setOnClickListener { viewModel.selectBotCount(2) }
         btnBots3.setOnClickListener { viewModel.selectBotCount(3) }
 
-        // --- PRO LOCK IMPLEMENTATION ---
-        findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { viewModel.startGame(1) } // 1 Token is always free
-        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { checkProAccessAndStart(2) }
-        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { checkProAccessAndStart(4) }
+        findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { startOrHostGame(1) }
+        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { startOrHostGame(2) }
+        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { startOrHostGame(4) }
 
         boardImage.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
@@ -217,71 +252,13 @@ class LudoActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkProAccessAndStart(tokenCount: Int) {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val isPro = prefs.getBoolean(PREF_IS_PRO, false)
-
-        if (isPro) {
-            viewModel.startGame(tokenCount)
+    private fun startOrHostGame(tokenCount: Int) {
+        if (currentSetupMode == "HOST") {
+            viewModel.hostMultiplayerGame(viewModel.tempPlayerCount, tokenCount)
+            groupTokens.visibility = View.GONE
         } else {
-            showProUnlockDialog(tokenCount)
+            viewModel.startGame(tokenCount)
         }
-    }
-
-    private fun showProUnlockDialog(pendingTokenCount: Int) {
-        val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "UNKNOWN_DEVICE"
-        val expectedCode = generateUnlockCode(deviceId)
-
-        val builder = AlertDialog.Builder(this)
-        builder.setTitle("Unlock PRO Mode \uD83D\uDD12")
-
-        val message = "Unlock 2 & 4 Token modes for just Rs. 149/-\n\n" +
-                "1. Copy UPI ID & Pay.\n" +
-                "2. Send screenshot + Device ID to our Telegram Bot.\n" +
-                "3. Enter the Unlock Code below.\n\n" +
-                "Device ID: $deviceId"
-
-        builder.setMessage(message)
-
-        val input = EditText(this)
-        input.hint = "Enter Telegram Unlock Code"
-        builder.setView(input)
-
-        builder.setPositiveButton("Unlock") { _, _ ->
-            val userInput = input.text.toString().trim().uppercase()
-            if (userInput == expectedCode) {
-                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(PREF_IS_PRO, true).apply()
-                Toast.makeText(this, "PRO Unlocked! Enjoy \uD83C\uDF89", Toast.LENGTH_LONG).show()
-                viewModel.startGame(pendingTokenCount)
-            } else {
-                Toast.makeText(this, "Invalid Code. Try again.", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        builder.setNeutralButton("Copy UPI") { _, _ ->
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("UPI ID", UPI_ID)
-            clipboard.setPrimaryClip(clip)
-            Toast.makeText(this, "UPI ID Copied!", Toast.LENGTH_SHORT).show()
-        }
-
-        builder.setNegativeButton("Open Telegram") { _, _ ->
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_BOT_URL))
-            try {
-                startActivity(intent)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Telegram app not found.", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        builder.show()
-    }
-
-    private fun generateUnlockCode(deviceId: String): String {
-        val input = deviceId + SECRET_SALT
-        val md = MessageDigest.getInstance("MD5")
-        val hashBytes = md.digest(input.toByteArray())
-        return hashBytes.joinToString("") { "%02x".format(it) }.take(6).uppercase()
     }
 
     private fun playRandomSetupVideos() {
@@ -343,6 +320,15 @@ class LudoActivity : AppCompatActivity() {
     }
 
     private fun setupObservers() {
+        viewModel.roomCode.observe(this) { code ->
+            if (code.isNotEmpty() && viewModel.isMultiplayer) {
+                textRoomCodeDisplay.visibility = View.VISIBLE
+                textRoomCodeDisplay.text = "ROOM: $code"
+            } else {
+                textRoomCodeDisplay.visibility = View.GONE
+            }
+        }
+
         viewModel.gameState.observe(this) { state ->
             layoutDashboard.visibility = if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) View.GONE else View.VISIBLE
 
@@ -352,16 +338,31 @@ class LudoActivity : AppCompatActivity() {
 
             when(state) {
                 LudoViewModel.State.SETUP_THEME -> {
+                    currentSetupMode = "NONE"
                     setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
-                    groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD"
+                    groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; groupMode.visibility = View.GONE; groupJoin.visibility = View.GONE; setupTitle.text = "SELECT BOARD"
                 }
                 LudoViewModel.State.SETUP_PLAYERS -> {
                     setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
-                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH"
+                    groupTheme.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH"
+
+                    if (currentSetupMode == "NONE") {
+                        groupMode.visibility = View.VISIBLE
+                        groupPlayers.visibility = View.GONE
+                        groupJoin.visibility = View.GONE
+                    } else if (currentSetupMode == "JOIN") {
+                        groupMode.visibility = View.GONE
+                        groupPlayers.visibility = View.GONE
+                        groupJoin.visibility = View.VISIBLE
+                    } else {
+                        groupMode.visibility = View.GONE
+                        groupPlayers.visibility = View.VISIBLE
+                        groupJoin.visibility = View.GONE
+                    }
                 }
                 LudoViewModel.State.SETUP_BOTS -> {
                     setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
-                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "ADD AI BOTS?"
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupMode.visibility = View.GONE; groupJoin.visibility = View.GONE; groupBots.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "ADD AI BOTS?"
                     val total = viewModel.tempPlayerCount
                     btnBots1.visibility = if (total >= 2) View.VISIBLE else View.GONE
                     btnBots2.visibility = if (total >= 3) View.VISIBLE else View.GONE
@@ -369,7 +370,7 @@ class LudoActivity : AppCompatActivity() {
                 }
                 LudoViewModel.State.SETUP_TOKENS -> {
                     setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
-                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH"
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupMode.visibility = View.GONE; groupJoin.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH"
                 }
                 LudoViewModel.State.GAME_OVER -> {
                     setupLayout.visibility = View.GONE; stopSetupVideos(); showGameOverDialog()
@@ -396,7 +397,13 @@ class LudoActivity : AppCompatActivity() {
             diceViews.forEach { (id, v) -> v.alpha = if (id == idx + 1) 1f else 0.5f; v.scaleX = if (id == idx + 1) 1.2f else 1f; v.scaleY = if (id == idx + 1) 1.2f else 1f }
         }
 
-        viewModel.statusMessage.observe(this) { statusText.text = it }
+        viewModel.statusMessage.observe(this) {
+            statusText.text = it
+            if (viewModel.gameState.value == LudoViewModel.State.SETUP_PLAYERS || viewModel.gameState.value == LudoViewModel.State.SETUP_TOKENS) {
+                setupTitle.text = it
+            }
+        }
+
         viewModel.announcement.observe(this) { ann -> if (ann != null) { showDynamicAnnouncement(ann); viewModel.clearAnnouncement() } }
         viewModel.turnUpdate.observe(this) { if (it != null && isUiInitialized) playTurnSequence(it) }
         viewModel.statsUpdate.observe(this) { updateDashboardStats() }

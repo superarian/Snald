@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "402363039243",
+    "project_id": "snald-e51ca",
+    "storage_bucket": "snald-e51ca.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:402363039243:android:5dbba087383d5a5320910e",
+        "android_client_info": {
+          "package_name": "com.bytemantis.snald"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAy0LvySebdeOExKmosL62dF0NK8ItZ3M8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
