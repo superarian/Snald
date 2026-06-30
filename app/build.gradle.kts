@@ -35,20 +35,26 @@ android {
 }
 
 dependencies {
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    implementation("com.airbnb.android:lottie:6.3.0")
 
-    // Import the Firebase BoM
-    implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
+    // Lottie Animations
+    implementation("com.airbnb.android:lottie:6.0.0")
 
-    // Add the dependency for Cloud Firestore
-    implementation("com.google.firebase:firebase-firestore")
+    // Firebase Auth (for OTP login) and Firestore (for DB sync)
+    implementation("com.google.firebase:firebase-auth-ktx:23.0.0")
+    implementation("com.google.firebase:firebase-firestore-ktx:25.0.0")
+
+    // ViewModel & Coroutine support
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1")
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.6.1")
+    implementation("androidx.activity:activity-ktx:1.7.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
 }

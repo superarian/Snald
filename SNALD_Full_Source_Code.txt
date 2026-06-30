@@ -1,0 +1,3596 @@
+============================================
+PROJECT: SNALD (Game Hub)
+EXPORT DATE: 04-08-2026 15:44:23
+INCLUDES: Snald, Ludo, Core, and Menu
+============================================
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\MenuActivity.kt
+################################################################
+
+
+package com.bytemantis.snald
+
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.bytemantis.snald.core.SoundManager // Assuming you moved SoundManager to the core package
+import com.bytemantis.snald.ludogame.LudoActivity
+import com.bytemantis.snald.snaldgame.SnaldActivity
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+class MenuActivity : AppCompatActivity() {
+
+    private lateinit var splashLayout: FrameLayout
+    private lateinit var soundManager: SoundManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_menu)
+
+        // Initialize Sound Manager for Menu Music
+        soundManager = SoundManager(this)
+
+        // Find Layouts and Buttons
+        splashLayout = findViewById(R.id.layout_splash)
+        val btnSnald = findViewById<Button>(R.id.btn_play_snald)
+        val btnLudo = findViewById<Button>(R.id.btn_play_ludo)
+
+        // Set up click listeners for the games
+        btnSnald.setOnClickListener {
+            val intent = Intent(this, SnaldActivity::class.java)
+            startActivity(intent)
+        }
+
+        btnLudo.setOnClickListener {
+            val intent = Intent(this, LudoActivity::class.java)
+            startActivity(intent)
+        }
+
+        // --- Splash Screen & Music Logic ---
+        splashLayout.visibility = View.VISIBLE
+        soundManager.startMenuMusic()
+
+        lifecycleScope.launch {
+            delay(3000) // 3 Seconds Splash
+            splashLayout.visibility = View.GONE
+        }
+    }
+
+    // --- Lifecycle Audio Management ---
+    override fun onPause() {
+        super.onPause()
+        soundManager.pauseMusic()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Resume music only if the splash screen is gone and we are on the menu
+        if (splashLayout.visibility == View.GONE) {
+            soundManager.resumeMusic()
+        }
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\core\Player.kt
+################################################################
+
+
+package com.bytemantis.snald.core
+
+data class Player(
+    val id: Int,
+    val name: String,
+    val color: Int, // Hex Color Code
+    var currentPosition: Int = 1,
+
+    // CHANGED: Star is now a counter (collect multiple)
+    var starCount: Int = 0,
+
+    // NEW: Pac-Man Entity State (0 = inactive)
+    var pacmanPosition: Int = 0,
+
+    var isFinished: Boolean = false
+) {
+    // Helper: Has at least 1 star for immunity
+    val hasShield: Boolean
+        get() = starCount >= 1
+
+    // Helper: Is Pac-Man currently on the board?
+    val isPacmanActive: Boolean
+        get() = pacmanPosition > 0
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\core\SoundManager.kt
+################################################################
+
+
+package com.bytemantis.snald.core
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.SoundPool
+import android.util.SparseIntArray
+import android.view.animation.LinearInterpolator
+import com.bytemantis.snald.R
+
+class SoundManager(private val context: Context) {
+
+    private val soundPool: SoundPool
+    private val soundMap = SparseIntArray()
+
+    // Background Music Players
+    private var menuMusicPlayer: MediaPlayer? = null
+    private var neonMusicPlayer: MediaPlayer? = null
+    private var woodMusicPlayer: MediaPlayer? = null
+    private var isMusicEnabled = true
+
+    init {
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+        soundPool = SoundPool.Builder()
+            .setMaxStreams(5)
+            .setAudioAttributes(audioAttributes)
+            .build()
+
+        // Load SFX
+        soundMap.put(R.raw.sfx_dice_roll, soundPool.load(context, R.raw.sfx_dice_roll, 1))
+        soundMap.put(R.raw.sfx_hop, soundPool.load(context, R.raw.sfx_hop, 1))
+        soundMap.put(R.raw.sfx_snake_bite, soundPool.load(context, R.raw.sfx_snake_bite, 1))
+        soundMap.put(R.raw.sfx_ladder_climb, soundPool.load(context, R.raw.sfx_ladder_climb, 1))
+        soundMap.put(R.raw.sfx_star_collect, soundPool.load(context, R.raw.sfx_star_collect, 1))
+        soundMap.put(R.raw.sfx_star_use, soundPool.load(context, R.raw.sfx_star_use, 1))
+        soundMap.put(R.raw.sfx_win, soundPool.load(context, R.raw.sfx_win, 1))
+        soundMap.put(R.raw.sfx_slide_back, soundPool.load(context, R.raw.sfx_slide_back, 1))
+        soundMap.put(R.raw.sfx_pacman_entry, soundPool.load(context, R.raw.sfx_pacman_entry, 1))
+        soundMap.put(R.raw.sfx_pacman_move, soundPool.load(context, R.raw.sfx_pacman_move, 1))
+        soundMap.put(R.raw.sfx_fast_flash, soundPool.load(context, R.raw.sfx_fast_flash, 1))
+        soundMap.put(R.raw.sfx_safe_zone, soundPool.load(context, R.raw.sfx_safe_zone, 1))
+    }
+
+    // --- Theme Music Control ---
+    fun playMusicForTheme(themeResId: Int) {
+        when (themeResId) {
+            R.drawable.ludo_board -> {
+                stopNeonMusic()
+                stopWoodMusic()
+                startMenuMusic()
+            }
+            R.drawable.ludo_board_neon -> {
+                stopMenuMusic()
+                stopWoodMusic()
+                startNeonMusic()
+            }
+            R.drawable.ludo_board_wood -> {
+                stopMenuMusic()
+                stopNeonMusic()
+                startWoodMusic()
+            }
+            else -> {
+                stopMenuMusic()
+                stopNeonMusic()
+                stopWoodMusic()
+            }
+        }
+    }
+
+    fun startMenuMusic() {
+        if (!isMusicEnabled) return
+        if (menuMusicPlayer == null) {
+            try {
+                menuMusicPlayer = MediaPlayer.create(context, R.raw.bgm_menu)
+                menuMusicPlayer?.isLooping = true
+                menuMusicPlayer?.setVolume(0.5f, 0.5f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (menuMusicPlayer?.isPlaying == false) menuMusicPlayer?.start()
+    }
+
+    fun stopMenuMusic() {
+        try {
+            if (menuMusicPlayer?.isPlaying == true) {
+                menuMusicPlayer?.pause()
+                menuMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseMusic() {
+        if (menuMusicPlayer?.isPlaying == true) menuMusicPlayer?.pause()
+    }
+
+    fun resumeMusic() {
+        if (menuMusicPlayer != null && !menuMusicPlayer!!.isPlaying) menuMusicPlayer?.start()
+    }
+
+    fun startNeonMusic() {
+        if (!isMusicEnabled) return
+        if (neonMusicPlayer == null) {
+            try {
+                neonMusicPlayer = MediaPlayer.create(context, R.raw.bgm_neon)
+                neonMusicPlayer?.isLooping = true
+                neonMusicPlayer?.setVolume(0.4f, 0.4f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (neonMusicPlayer?.isPlaying == false) neonMusicPlayer?.start()
+    }
+
+    fun stopNeonMusic() {
+        try {
+            if (neonMusicPlayer?.isPlaying == true) {
+                neonMusicPlayer?.pause()
+                neonMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseNeonMusic() {
+        if (neonMusicPlayer?.isPlaying == true) neonMusicPlayer?.pause()
+    }
+
+    fun resumeNeonMusic() {
+        if (neonMusicPlayer != null && !neonMusicPlayer!!.isPlaying) neonMusicPlayer?.start()
+    }
+
+    fun startWoodMusic() {
+        if (!isMusicEnabled) return
+        if (woodMusicPlayer == null) {
+            try {
+                woodMusicPlayer = MediaPlayer.create(context, R.raw.bgm_wood)
+                woodMusicPlayer?.isLooping = true
+                woodMusicPlayer?.setVolume(0.4f, 0.4f)
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (woodMusicPlayer?.isPlaying == false) woodMusicPlayer?.start()
+    }
+
+    fun stopWoodMusic() {
+        try {
+            if (woodMusicPlayer?.isPlaying == true) {
+                woodMusicPlayer?.pause()
+                woodMusicPlayer?.seekTo(0)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseWoodMusic() {
+        if (woodMusicPlayer?.isPlaying == true) woodMusicPlayer?.pause()
+    }
+
+    fun resumeWoodMusic() {
+        if (woodMusicPlayer != null && !woodMusicPlayer!!.isPlaying) woodMusicPlayer?.start()
+    }
+
+    // --- SFX Methods with Centralized Volume Mixing ---
+    fun playDiceRoll(): Int = play(R.raw.sfx_dice_roll, 0.5f) // -50% Volume
+    fun playHop(): Int = play(R.raw.sfx_hop, 0.7f)            // -30% Volume
+    fun playSafeZone(): Int = play(R.raw.sfx_safe_zone, 0.8f) // -20% Volume
+
+    fun playSnakeBite(): Int = play(R.raw.sfx_snake_bite)
+    fun playLadderClimb(): Int = play(R.raw.sfx_ladder_climb)
+    fun playStarUsed(): Int = play(R.raw.sfx_star_use)
+    fun playWin(): Int = play(R.raw.sfx_win)
+    fun playSlideBack(): Int = play(R.raw.sfx_slide_back)
+    fun playPacmanEntry(): Int = play(R.raw.sfx_pacman_entry)
+    fun playPacmanMove(): Int = play(R.raw.sfx_pacman_move)
+    fun playFastFlash(): Int = play(R.raw.sfx_fast_flash)
+
+    fun stop(streamId: Int) {
+        if (streamId != 0) soundPool.stop(streamId)
+    }
+
+    // Modified for -20% starting volume
+    fun playStarCollect() {
+        val soundId = soundMap.get(R.raw.sfx_star_collect)
+        if (soundId == 0) return
+        val streamId = soundPool.play(soundId, 0.8f, 0.8f, 1, 0, 1.0f)
+        val fadeAnim = ValueAnimator.ofFloat(0.8f, 0.0f)
+        fadeAnim.duration = 1500L
+        fadeAnim.interpolator = LinearInterpolator()
+        fadeAnim.addUpdateListener { animation ->
+            val volume = animation.animatedValue as Float
+            soundPool.setVolume(streamId, volume, volume)
+        }
+        fadeAnim.startDelay = 500
+        fadeAnim.start()
+    }
+
+    // Upgraded internal play method to handle volume scaling
+    private fun play(resId: Int, volume: Float = 1.0f): Int {
+        val soundId = soundMap.get(resId)
+        if (soundId == 0) return 0
+        return soundPool.play(soundId, volume, volume, 1, 0, 1.0f)
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoActivity.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+import android.content.Context
+import android.graphics.Color
+import android.net.Uri
+import android.os.Bundle
+import android.view.Gravity
+import android.view.View
+import android.view.ViewTreeObserver
+import android.widget.*
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.airbnb.lottie.LottieAnimationView
+import com.bytemantis.snald.R
+import com.bytemantis.snald.core.SoundManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.min
+
+class LudoActivity : AppCompatActivity() {
+
+    private val viewModel: LudoViewModel by viewModels()
+    private lateinit var soundManager: SoundManager
+
+    private lateinit var boardImage: ImageView
+    private lateinit var neonOverlay: LottieAnimationView
+    private lateinit var statusText: TextView
+    private lateinit var tokenOverlay: FrameLayout
+    private lateinit var starOverlay: FrameLayout
+    private lateinit var victoryPopText: TextView
+
+    private lateinit var setupLayout: LinearLayout
+    private lateinit var setupTitle: TextView
+    private lateinit var groupTheme: LinearLayout
+    private lateinit var groupPlayers: LinearLayout
+    private lateinit var groupTokens: LinearLayout
+
+    private lateinit var groupBots: LinearLayout
+    private lateinit var btnBots0: Button
+    private lateinit var btnBots1: Button
+    private lateinit var btnBots2: Button
+    private lateinit var btnBots3: Button
+
+    private lateinit var gameOverLayoutLudo: LinearLayout
+    private lateinit var textRankings: TextView
+    private lateinit var btnLudoHub: Button
+
+    private lateinit var layoutDashboard: LinearLayout
+    private lateinit var textDashP1: TextView
+    private lateinit var textDashP2: TextView
+    private lateinit var textDashP3: TextView
+    private lateinit var textDashP4: TextView
+    private lateinit var textDashTimer: TextView
+
+    private lateinit var videoSetupTop: VideoView
+    private lateinit var videoSetupBottom: VideoView
+
+    private val setupVideoResources = listOf(
+        R.raw.random_bgm_1, R.raw.random_bgm_2, R.raw.random_bgm_3,
+        R.raw.random_bgm_4, R.raw.random_bgm_5, R.raw.random_bgm_6,
+        R.raw.random_bgm_7, R.raw.random_bgm_8, R.raw.random_bgm_9
+    )
+
+    private lateinit var diceViews: Map<Int, ImageView>
+    private lateinit var playerLayouts: Map<Int, View>
+    private lateinit var progressBars: Map<Int, ProgressBar>
+
+    private val allTokenViews = mutableListOf<MutableList<ImageView>>()
+    private val activeBadges = mutableListOf<TextView>()
+
+    private var cellW = 0f
+    private var cellH = 0f
+    private var boardOffsetX = 0f
+    private var boardOffsetY = 0f
+    private var isUiInitialized = false
+
+    private val PREFS_NAME = "LudoPrefs"
+    private val KEY_THEME = "SelectedTheme"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_ludo)
+        soundManager = SoundManager(this)
+
+        allTokenViews.clear()
+        repeat(4) { allTokenViews.add(mutableListOf()) }
+
+        setupUI()
+        setupObservers()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val state = viewModel.gameState.value
+                if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) {
+                    if (!viewModel.navigateBackInSetup()) {
+                        finish()
+                    }
+                } else if (state == LudoViewModel.State.GAME_OVER) {
+                    viewModel.quitGame()
+                    finish()
+                } else {
+                    AlertDialog.Builder(this@LudoActivity)
+                        .setTitle("Leave Match")
+                        .setMessage("Do you want to save your progress or quit the match completely?")
+                        .setPositiveButton("Save & Exit") { _, _ -> viewModel.saveCurrentState(); finish() }
+                        .setNegativeButton("Quit Match") { _, _ -> viewModel.quitGame(); finish() }
+                        .setNeutralButton("Cancel", null)
+                        .show()
+                }
+            }
+        })
+    }
+
+    private fun setupUI() {
+        boardImage = findViewById(R.id.img_ludo_board)
+        neonOverlay = findViewById(R.id.anim_ludo_neon_overlay)
+        statusText = findViewById(R.id.text_ludo_status)
+        tokenOverlay = findViewById(R.id.overlay_ludo_tokens)
+        starOverlay = findViewById(R.id.overlay_ludo_stars)
+        victoryPopText = findViewById(R.id.text_ludo_victory_pop)
+
+        setupLayout = findViewById(R.id.layout_ludo_setup)
+        setupTitle = findViewById(R.id.text_setup_title)
+        groupTheme = findViewById(R.id.group_setup_theme)
+        groupPlayers = findViewById(R.id.group_setup_players)
+        groupTokens = findViewById(R.id.group_setup_tokens)
+
+        groupBots = findViewById(R.id.group_setup_bots)
+        btnBots0 = findViewById(R.id.btn_bots_0)
+        btnBots1 = findViewById(R.id.btn_bots_1)
+        btnBots2 = findViewById(R.id.btn_bots_2)
+        btnBots3 = findViewById(R.id.btn_bots_3)
+
+        gameOverLayoutLudo = findViewById(R.id.layout_game_over_ludo)
+        textRankings = findViewById(R.id.text_ludo_rankings)
+        btnLudoHub = findViewById(R.id.btn_ludo_hub)
+
+        btnLudoHub.setOnClickListener { viewModel.quitGame(); finish() }
+
+        videoSetupTop = findViewById(R.id.video_setup_top)
+        videoSetupBottom = findViewById(R.id.video_setup_bottom)
+
+        layoutDashboard = findViewById(R.id.layout_dashboard)
+        textDashP1 = findViewById(R.id.text_dash_p1)
+        textDashP2 = findViewById(R.id.text_dash_p2)
+        textDashP3 = findViewById(R.id.text_dash_p3)
+        textDashP4 = findViewById(R.id.text_dash_p4)
+        textDashTimer = findViewById(R.id.text_dash_timer)
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
+        boardImage.setImageResource(savedTheme)
+
+        if (savedTheme == R.drawable.ludo_board_neon) { neonOverlay.visibility = View.VISIBLE; neonOverlay.playAnimation() }
+        else { neonOverlay.visibility = View.GONE; neonOverlay.cancelAnimation() }
+
+        diceViews = mapOf(1 to findViewById(R.id.dice_p1), 2 to findViewById(R.id.dice_p2), 3 to findViewById(R.id.dice_p3), 4 to findViewById(R.id.dice_p4))
+        playerLayouts = mapOf(3 to findViewById(R.id.layout_ludo_p3), 4 to findViewById(R.id.layout_ludo_p4))
+        progressBars = mapOf(0 to findViewById(R.id.progress_p1), 1 to findViewById(R.id.progress_p2), 2 to findViewById(R.id.progress_p3), 3 to findViewById(R.id.progress_p4))
+
+        findViewById<Button>(R.id.btn_theme_classic).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board) }
+        findViewById<Button>(R.id.btn_theme_wood).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_wood) }
+        findViewById<Button>(R.id.btn_theme_neon).setOnClickListener { applyAndSaveTheme(R.drawable.ludo_board_neon) }
+
+        findViewById<Button>(R.id.btn_ludo_2p).setOnClickListener { viewModel.selectPlayerCount(2) }
+        findViewById<Button>(R.id.btn_ludo_3p).setOnClickListener { viewModel.selectPlayerCount(3) }
+        findViewById<Button>(R.id.btn_ludo_4p).setOnClickListener { viewModel.selectPlayerCount(4) }
+
+        btnBots0.setOnClickListener { viewModel.selectBotCount(0) }
+        btnBots1.setOnClickListener { viewModel.selectBotCount(1) }
+        btnBots2.setOnClickListener { viewModel.selectBotCount(2) }
+        btnBots3.setOnClickListener { viewModel.selectBotCount(3) }
+
+        findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { viewModel.startGame(1) }
+        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { viewModel.startGame(2) }
+        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { viewModel.startGame(4) }
+
+        boardImage.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (boardImage.width > 0 && !isUiInitialized) {
+                    calculateBoardMetrics()
+                    val currentPlayers = viewModel.players.value
+                    if (currentPlayers != null && currentPlayers.isNotEmpty()) {
+                        spawnAllTokensInitial(currentPlayers.size)
+                        isUiInitialized = true
+                        renderBoardState()
+                        renderDynamicSafeZone(viewModel.dynamicSafeZone.value)
+                    }
+                    boardImage.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                }
+            }
+        })
+
+        diceViews.forEach { (id, view) ->
+            view.setOnClickListener {
+                val activeIdx = viewModel.activePlayerIndex.value ?: 0
+                val activePlayer = viewModel.players.value?.get(activeIdx)
+                if (viewModel.gameState.value == LudoViewModel.State.WAITING_FOR_ROLL && id == (activeIdx + 1) && activePlayer?.isBot == false) {
+                    viewModel.rollDice()
+                }
+            }
+        }
+    }
+
+    private fun playRandomSetupVideos() {
+        if (videoSetupTop.isPlaying || videoSetupBottom.isPlaying) return
+
+        val randomVids = setupVideoResources.shuffled().take(2)
+        if (randomVids.size == 2) {
+            setupVideoLoop(videoSetupTop, randomVids[0])
+            setupVideoLoop(videoSetupBottom, randomVids[1])
+        }
+    }
+
+    private fun setupVideoLoop(videoView: VideoView, resId: Int) {
+        try {
+            val uri = Uri.parse("android.resource://$packageName/$resId")
+            videoView.setVideoURI(uri)
+            videoView.setOnPreparedListener { mp ->
+                mp.isLooping = true
+                mp.setVolume(0f, 0f)
+                videoView.start()
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun stopSetupVideos() {
+        if (videoSetupTop.isPlaying) videoSetupTop.stopPlayback()
+        if (videoSetupBottom.isPlaying) videoSetupBottom.stopPlayback()
+    }
+
+    private fun applyAndSaveTheme(themeResId: Int) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(KEY_THEME, themeResId).apply()
+        boardImage.setImageResource(themeResId)
+        if (themeResId == R.drawable.ludo_board_neon) { neonOverlay.visibility = View.VISIBLE; neonOverlay.playAnimation() }
+        else { neonOverlay.visibility = View.GONE; neonOverlay.cancelAnimation() }
+        viewModel.selectTheme()
+    }
+
+    private fun handleGameStateMusic(state: LudoViewModel.State, themeResId: Int) {
+        when (state) {
+            LudoViewModel.State.SETUP_THEME,
+            LudoViewModel.State.SETUP_PLAYERS,
+            LudoViewModel.State.SETUP_BOTS,
+            LudoViewModel.State.SETUP_TOKENS -> {
+                soundManager.stopNeonMusic()
+                soundManager.stopWoodMusic()
+                soundManager.startMenuMusic()
+            }
+            LudoViewModel.State.WAITING_FOR_ROLL,
+            LudoViewModel.State.WAITING_FOR_MOVE,
+            LudoViewModel.State.ANIMATING -> {
+                soundManager.playMusicForTheme(themeResId)
+            }
+            LudoViewModel.State.GAME_OVER -> {
+                soundManager.stopMenuMusic()
+                soundManager.stopNeonMusic()
+                soundManager.stopWoodMusic()
+            }
+        }
+    }
+
+    private fun setupObservers() {
+        viewModel.gameState.observe(this) { state ->
+            layoutDashboard.visibility = if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) View.GONE else View.VISIBLE
+
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
+            handleGameStateMusic(state, currentTheme)
+
+            when(state) {
+                LudoViewModel.State.SETUP_THEME -> {
+                    setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
+                    groupTheme.visibility = View.VISIBLE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "SELECT BOARD"
+                }
+                LudoViewModel.State.SETUP_PLAYERS -> {
+                    setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.VISIBLE; groupBots.visibility = View.GONE; groupTokens.visibility = View.GONE; setupTitle.text = "LUDO MATCH"
+                }
+                LudoViewModel.State.SETUP_BOTS -> {
+                    setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.VISIBLE; groupTokens.visibility = View.GONE; setupTitle.text = "ADD AI BOTS?"
+
+                    val total = viewModel.tempPlayerCount
+                    btnBots1.visibility = if (total >= 2) View.VISIBLE else View.GONE
+                    btnBots2.visibility = if (total >= 3) View.VISIBLE else View.GONE
+                    btnBots3.visibility = if (total >= 4) View.VISIBLE else View.GONE
+                }
+                LudoViewModel.State.SETUP_TOKENS -> {
+                    setupLayout.visibility = View.VISIBLE; gameOverLayoutLudo.visibility = View.GONE; playRandomSetupVideos()
+                    groupTheme.visibility = View.GONE; groupPlayers.visibility = View.GONE; groupBots.visibility = View.GONE; groupTokens.visibility = View.VISIBLE; setupTitle.text = "GAME LENGTH"
+                }
+                LudoViewModel.State.GAME_OVER -> {
+                    setupLayout.visibility = View.GONE; stopSetupVideos(); showGameOverDialog()
+                }
+                else -> {
+                    setupLayout.visibility = View.GONE; gameOverLayoutLudo.visibility = View.GONE; stopSetupVideos()
+                }
+            }
+        }
+
+        viewModel.players.observe(this) { players ->
+            if (players.isNotEmpty()) {
+                playerLayouts.get(3)?.visibility = if (players.size >= 3) View.VISIBLE else View.GONE
+                playerLayouts.get(4)?.visibility = if (players.size >= 4) View.VISIBLE else View.GONE
+                progressBars.get(2)?.visibility = if (players.size >= 3) View.VISIBLE else View.GONE
+                progressBars.get(3)?.visibility = if (players.size >= 4) View.VISIBLE else View.GONE
+                if (cellW > 0 && !isUiInitialized) { spawnAllTokensInitial(players.size); isUiInitialized = true }
+                if (isUiInitialized) renderBoardState()
+                updateDashboardStats()
+            }
+        }
+
+        viewModel.activePlayerIndex.observe(this) { idx ->
+            diceViews.forEach { (id, v) -> v.alpha = if (id == idx + 1) 1f else 0.5f; v.scaleX = if (id == idx + 1) 1.2f else 1f; v.scaleY = if (id == idx + 1) 1.2f else 1f }
+        }
+
+        viewModel.statusMessage.observe(this) { statusText.text = it }
+        viewModel.announcement.observe(this) { ann -> if (ann != null) { showDynamicAnnouncement(ann); viewModel.clearAnnouncement() } }
+        viewModel.turnUpdate.observe(this) { if (it != null && isUiInitialized) playTurnSequence(it) }
+        viewModel.statsUpdate.observe(this) { updateDashboardStats() }
+
+        viewModel.diceValue.observe(this) { dice ->
+            val dv = diceViews.get(viewModel.activePlayerIndex.value!! + 1)
+            if (dv != null) { soundManager.playDiceRoll(); updateDiceImage(dv, dice); dv.animate().rotationBy(360f).setDuration(300).start() }
+        }
+
+        viewModel.timerSeconds.observe(this) { secs ->
+            textDashTimer.text = "00:${secs.toString().padStart(2, '0')}"
+            if (secs <= 5) textDashTimer.setTextColor(Color.RED) else textDashTimer.setTextColor(Color.WHITE)
+        }
+
+        viewModel.dynamicSafeZone.observe(this) { zone ->
+            if (isUiInitialized) renderDynamicSafeZone(zone)
+        }
+    }
+
+    private fun updateDashboardStats() {
+        val players = viewModel.players.value ?: return
+
+        if (players.size > 0) { textDashP1.visibility = View.VISIBLE; textDashP1.text = "P1 ⚔️${players[0].kills}  💀${players[0].deaths}  🎲${players[0].sixesRolled}" } else { textDashP1.visibility = View.GONE }
+        if (players.size > 1) { textDashP2.visibility = View.VISIBLE; textDashP2.text = "P2 ⚔️${players[1].kills}  💀${players[1].deaths}  🎲${players[1].sixesRolled}" } else { textDashP2.visibility = View.GONE }
+        if (players.size > 2) { textDashP3.visibility = View.VISIBLE; textDashP3.text = "P3 ⚔️${players[2].kills}  💀${players[2].deaths}  🎲${players[2].sixesRolled}" } else { textDashP3.visibility = View.GONE }
+        if (players.size > 3) { textDashP4.visibility = View.VISIBLE; textDashP4.text = "P4 ⚔️${players[3].kills}  💀${players[3].deaths}  🎲${players[3].sixesRolled}" } else { textDashP4.visibility = View.GONE }
+    }
+
+    private fun renderDynamicSafeZone(coord: Pair<Int, Int>?) {
+        if (cellW <= 0) return
+        starOverlay.removeAllViews()
+        if (coord != null) {
+            val star = ImageView(this).apply {
+                setImageResource(android.R.drawable.btn_star_big_on)
+                layoutParams = FrameLayout.LayoutParams((cellW * 0.7f).toInt(), (cellW * 0.7f).toInt())
+                alpha = 0f
+            }
+            starOverlay.addView(star)
+            moveViewToGrid(star, coord.first, coord.second)
+            star.animate().alpha(0.85f).setDuration(500).start()
+        }
+    }
+
+    private fun showDynamicAnnouncement(ann: LudoViewModel.Announcement) {
+        victoryPopText.text = ann.message
+
+        val color = when(ann.playerId) {
+            1 -> 0xFFFF0000.toInt()
+            2 -> 0xFF00FF00.toInt()
+            3 -> 0xFF00CED1.toInt()
+            4 -> 0xFFFFFF00.toInt()
+            else -> 0xFFFFFFFF.toInt()
+        }
+        victoryPopText.setTextColor(color)
+
+        victoryPopText.visibility = View.VISIBLE
+        victoryPopText.alpha = 0f
+
+        if (ann.type == LudoViewModel.AnnouncementType.PLAYER_VICTORY) {
+            soundManager.playWin()
+            victoryPopText.animate().alpha(1f).scaleX(1.2f).scaleY(1.2f).setDuration(500).withEndAction {
+                lifecycleScope.launch { delay(3000); victoryPopText.animate().alpha(0f).scaleX(1f).scaleY(1f).setDuration(500).withEndAction { victoryPopText.visibility = View.GONE }.start() }
+            }.start()
+        } else {
+            soundManager.playSafeZone()
+            victoryPopText.animate().alpha(1f).setDuration(300).withEndAction {
+                lifecycleScope.launch { delay(1200); victoryPopText.animate().alpha(0f).setDuration(300).withEndAction { victoryPopText.visibility = View.GONE }.start() }
+            }.start()
+        }
+    }
+
+    private fun playTurnSequence(u: LudoViewModel.TurnUpdate) {
+        if (!isUiInitialized || allTokenViews.get(u.playerIdx).isEmpty()) return
+        val view = allTokenViews.get(u.playerIdx).get(u.tokenIdx)
+        view.visibility = View.VISIBLE; view.bringToFront()
+
+        if (u.isSpawn) {
+            soundManager.playStarCollect()
+            val coord = LudoBoardConfig.getGlobalCoord(u.playerIdx, 0)
+            if (coord != null) moveViewToGrid(view, coord.first, coord.second)
+            view.postDelayed({ finishTurnSequence(u) }, 450)
+        } else {
+            val players = viewModel.players.value!!
+            val currentPos = players.get(u.playerIdx).tokenPositions.get(u.tokenIdx)
+            val start = kotlin.math.max(0, currentPos - u.visualSteps)
+            runMoveLoop(view, u.playerIdx, start, 1, u.visualSteps, u)
+        }
+    }
+
+    private fun runMoveLoop(v: View, p: Int, s: Int, step: Int, total: Int, u: LudoViewModel.TurnUpdate) {
+        if (step > total) { finishTurnSequence(u); return }
+        val coord = LudoBoardConfig.getGlobalCoord(p, s + step)
+        if (coord != null) {
+            soundManager.playHop()
+            val tx = boardOffsetX + (coord.first + 0.5f) * cellW - (v.width / 2)
+            val ty = boardOffsetY + (coord.second + 0.5f) * cellH - (v.height / 2)
+            v.animate().x(tx).y(ty).setDuration(150).withEndAction { runMoveLoop(v, p, s, step + 1, total, u) }.start()
+        } else finishTurnSequence(u)
+    }
+
+    private fun finishTurnSequence(u: LudoViewModel.TurnUpdate) {
+        if (!u.isSpawn) when(u.soundToPlay) {
+            LudoViewModel.SoundType.SAFE -> soundManager.playSafeZone()
+            LudoViewModel.SoundType.WIN -> soundManager.playWin()
+            LudoViewModel.SoundType.KILL -> soundManager.playSlideBack()
+            LudoViewModel.SoundType.STAR_COLLECT -> soundManager.playStarCollect()
+            LudoViewModel.SoundType.SHIELD_BREAK -> soundManager.playStarUsed()
+            else -> {}
+        }
+
+        if (u.killInfo != null) {
+            val victim = allTokenViews.get(u.killInfo.victimPlayerIdx).get(u.killInfo.victimTokenIdx)
+            val base = getBaseCoord(u.killInfo.victimPlayerIdx, u.killInfo.victimTokenIdx)
+            victim.animate().x(boardOffsetX + base.first * cellW - victim.width/2)
+                .y(boardOffsetY + base.second * cellH - victim.height/2)
+                .setDuration(500).withEndAction {
+                    viewModel.onTurnAnimationsFinished()
+                    renderBoardState()
+                }.start()
+        } else {
+            viewModel.onTurnAnimationsFinished()
+            renderBoardState()
+        }
+    }
+
+    private fun renderBoardState() {
+        val players = viewModel.players.value ?: return
+        if (!isUiInitialized || allTokenViews.get(0).isEmpty()) return
+        clearBadges()
+        val occMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<Int, Int>>>()
+
+        players.forEachIndexed { pIdx, player ->
+            val max = player.tokenCount * 56
+            val current = player.tokenPositions.filter { it > -1 }.sumOf { it }
+            progressBars.get(pIdx)?.progress = (current.toDouble() / max * 100).toInt()
+
+            for (tIdx in 0 until player.tokenPositions.size) {
+                val pos = player.tokenPositions.get(tIdx)
+                val v = allTokenViews.get(pIdx).get(tIdx)
+                val hasShield = player.tokenShields.get(tIdx)
+
+                if (hasShield) {
+                    v.setBackgroundResource(R.drawable.bg_ludo_halo)
+                    val padding = (cellW * 0.20f).toInt()
+                    v.setPadding(padding, padding, padding, padding)
+                } else {
+                    v.background = null
+                    v.setPadding(0, 0, 0, 0)
+                }
+
+                if (pos == -1) {
+                    val b = getBaseCoord(pIdx, tIdx)
+                    moveViewToPrecise(v, b.first, b.second); v.scaleX = 1f; v.scaleY = 1f; v.visibility = View.VISIBLE
+                } else if (pos == 56) v.visibility = View.GONE
+                else {
+                    val c = LudoBoardConfig.getGlobalCoord(pIdx, pos)
+                    if (c != null) occMap.getOrPut(c) { mutableListOf() }.add(Pair(pIdx, tIdx))
+                }
+            }
+        }
+
+        occMap.forEach { (c, tokens) ->
+            val groupedByPlayer = tokens.groupBy { it.first }
+            if (groupedByPlayer.size == 1) {
+                val playerTokens = groupedByPlayer.values.first()
+                val mainToken = allTokenViews[playerTokens[0].first][playerTokens[0].second]
+                mainToken.visibility = View.VISIBLE; mainToken.scaleX = 1f; mainToken.scaleY = 1f; moveViewToGrid(mainToken, c.first, c.second)
+                for (i in 1 until playerTokens.size) allTokenViews[playerTokens[i].first][playerTokens[i].second].visibility = View.GONE
+                if (playerTokens.size > 1) addBadge(mainToken, playerTokens.size)
+            } else {
+                var colorIndex = 0
+                groupedByPlayer.forEach { (playerId, playerTokens) ->
+                    val mainToken = allTokenViews[playerId][playerTokens[0].second]
+                    mainToken.visibility = View.VISIBLE; mainToken.scaleX = 0.6f; mainToken.scaleY = 0.6f
+                    val ox = if (colorIndex % 2 == 0) -0.25f else 0.25f; val oy = if (colorIndex < 2) -0.25f else 0.25f
+                    moveViewToPrecise(mainToken, c.first + 0.5f + ox, c.second + 0.5f + oy)
+                    for (i in 1 until playerTokens.size) allTokenViews[playerId][playerTokens[i].second].visibility = View.GONE
+                    if (playerTokens.size > 1) addBadge(mainToken, playerTokens.size)
+                    colorIndex++
+                }
+            }
+        }
+    }
+
+    private fun calculateBoardMetrics() {
+        val d = boardImage.drawable ?: return
+        val scale = min(boardImage.width.toFloat() / d.intrinsicWidth, boardImage.height.toFloat() / d.intrinsicHeight)
+        val dw = d.intrinsicWidth * scale; val dh = d.intrinsicHeight * scale
+        boardOffsetX = (boardImage.width - dw) / 2; boardOffsetY = (boardImage.height - dh) / 2
+        cellW = dw / 15f; cellH = dh / 15f
+    }
+
+    private fun spawnAllTokensInitial(playerCount: Int) {
+        if (cellW <= 0) return
+        tokenOverlay.removeAllViews(); allTokenViews.forEach { it.clear() }
+        val players = viewModel.players.value ?: return
+        val tokensPerPlayer = players.get(0).tokenCount
+        val res = listOf(R.drawable.red_token, R.drawable.green_token, R.drawable.blue_token, R.drawable.yellow_token)
+        for (i in 0 until playerCount) {
+            for (tIdx in 0 until tokensPerPlayer) {
+                val t = ImageView(this).apply {
+                    setImageResource(res.get(i)); layoutParams = FrameLayout.LayoutParams((cellW * 0.8f).toInt(), (cellW * 0.8f).toInt())
+                    setOnClickListener {
+                        // Token clicking is protected at the ViewModel level during bot turns
+                        if (viewModel.activePlayerIndex.value == i) viewModel.onTokenClicked(tIdx)
+                    }
+                }
+                allTokenViews.get(i).add(t); tokenOverlay.addView(t)
+                val baseCoord = LudoBoardConfig.getBasePreciseCoord(i, tIdx)
+                moveViewToPrecise(t, baseCoord.first, baseCoord.second)
+            }
+        }
+    }
+
+    private fun moveViewToGrid(v: View, c: Int, r: Int) = moveViewToPrecise(v, c + 0.5f, r + 0.5f)
+    private fun moveViewToPrecise(v: View, cx: Float, cy: Float) { v.x = boardOffsetX + (cx * cellW) - (v.layoutParams.width / 2); v.y = boardOffsetY + (cy * cellH) - (v.layoutParams.width / 2) }
+    private fun getBaseCoord(p: Int, t: Int) = LudoBoardConfig.getBasePreciseCoord(p, t)
+    private fun updateDiceImage(v: ImageView, d: Int) = v.setImageResource(when(d) { 1 -> R.drawable.dice_1; 2 -> R.drawable.dice_2; 3 -> R.drawable.dice_3; 4 -> R.drawable.dice_4; 5 -> R.drawable.dice_5; else -> R.drawable.dice_6 })
+
+    private fun addBadge(t: View, c: Int) {
+        val b = TextView(this).apply { text = c.toString(); setTextColor(Color.WHITE); setBackgroundResource(R.drawable.bg_badge_circle); gravity = Gravity.CENTER; textSize = 10f; val s = (cellW * 0.4f).toInt(); layoutParams = FrameLayout.LayoutParams(s, s); x = t.x + (t.width / 2); y = t.y - (s / 4) }
+        tokenOverlay.addView(b); activeBadges.add(b)
+    }
+
+    private fun clearBadges() { activeBadges.forEach { tokenOverlay.removeView(it) }; activeBadges.clear() }
+
+    private fun showGameOverDialog() {
+        val rankings = viewModel.getFinalRankings()
+        val msg = StringBuilder()
+        rankings.forEach { (rank, player) ->
+            msg.append("$rank : ${player.colorName}\n")
+        }
+        textRankings.text = msg.toString().trim()
+
+        gameOverLayoutLudo.visibility = View.VISIBLE
+        gameOverLayoutLudo.alpha = 0f
+        gameOverLayoutLudo.animate().alpha(1f).setDuration(500).start()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        soundManager.pauseMusic()
+        soundManager.pauseNeonMusic()
+        soundManager.pauseWoodMusic()
+        stopSetupVideos()
+        val state = viewModel.gameState.value
+        if (state != LudoViewModel.State.SETUP_THEME && state != LudoViewModel.State.SETUP_PLAYERS && state != LudoViewModel.State.SETUP_BOTS && state != LudoViewModel.State.SETUP_TOKENS && state != LudoViewModel.State.GAME_OVER) {
+            viewModel.saveCurrentState()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val state = viewModel.gameState.value ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val currentTheme = prefs.getInt(KEY_THEME, R.drawable.ludo_board)
+
+        if (state == LudoViewModel.State.WAITING_FOR_ROLL || state == LudoViewModel.State.WAITING_FOR_MOVE || state == LudoViewModel.State.ANIMATING) {
+            if (currentTheme == R.drawable.ludo_board_neon) {
+                soundManager.resumeNeonMusic()
+            } else if (currentTheme == R.drawable.ludo_board_wood) {
+                soundManager.resumeWoodMusic()
+            } else if (currentTheme == R.drawable.ludo_board) {
+                soundManager.resumeMusic()
+            }
+        } else if (state == LudoViewModel.State.SETUP_THEME || state == LudoViewModel.State.SETUP_PLAYERS || state == LudoViewModel.State.SETUP_BOTS || state == LudoViewModel.State.SETUP_TOKENS) {
+            playRandomSetupVideos()
+            soundManager.resumeMusic()
+        }
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoAnimationManager.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.view.View
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.LinearInterpolator
+import com.bytemantis.snald.core.SoundManager
+import kotlinx.coroutines.delay
+
+class LudoAnimationManager(private val soundManager: SoundManager) {
+
+    private val HOP_DURATION = 150L
+    private val SLIDE_SPEED_PPS = 1200f // Faster slide
+
+    suspend fun animateHop(
+        tokenView: View,
+        playerIdx: Int,
+        startPathIndex: Int,
+        steps: Int,
+        cellW: Float,
+        cellH: Float,
+        boardOffsetX: Float,
+        boardOffsetY: Float
+    ) {
+        var currentPathIndex = startPathIndex
+
+        // 1. If starting from Base (-1), jump to Start (0)
+        if (currentPathIndex == -1) {
+            val startCoord = LudoBoardConfig.getGlobalCoord(playerIdx, 0) ?: return
+
+            animateMoveTo(tokenView, startCoord, cellW, cellH, boardOffsetX, boardOffsetY, 300)
+            delay(300)
+
+            currentPathIndex = 0
+
+            if (steps == 0) return
+        }
+
+        // 2. Loop through the steps
+        for (i in 1..steps) {
+            val nextPathIndex = currentPathIndex + 1
+            if (nextPathIndex > 56) break // FIX: Boundary is now 56
+
+            val targetCoord = LudoBoardConfig.getGlobalCoord(playerIdx, nextPathIndex) ?: break
+
+            animateMoveTo(tokenView, targetCoord, cellW, cellH, boardOffsetX, boardOffsetY, HOP_DURATION)
+            soundManager.playHop()
+
+            delay(HOP_DURATION + 20)
+            currentPathIndex = nextPathIndex
+        }
+    }
+
+    suspend fun animateDeathSlide(
+        tokenView: View,
+        startCoord: Pair<Int, Int>,
+        baseCoord: Pair<Float, Float>,
+        cellW: Float,
+        cellH: Float,
+        boardOffsetX: Float,
+        boardOffsetY: Float
+    ) {
+        val startX = boardOffsetX + (startCoord.first * cellW)
+        val startY = boardOffsetY + (startCoord.second * cellH)
+        val endX = boardOffsetX + (baseCoord.first * cellW)
+        val endY = boardOffsetY + (baseCoord.second * cellH)
+
+        val dx = endX - startX
+        val dy = endY - startY
+        val distance = kotlin.math.sqrt(dx*dx + dy*dy)
+
+        val duration = (distance / SLIDE_SPEED_PPS * 1000).toLong().coerceAtLeast(200)
+
+        return kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            tokenView.animate()
+                .x(endX + (cellW - tokenView.width)/2)
+                .y(endY + (cellH - tokenView.height)/2)
+                .setDuration(duration)
+                .setInterpolator(AccelerateInterpolator())
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        continuation.resume(Unit, null)
+                    }
+                })
+                .start()
+        }
+    }
+
+    private fun animateMoveTo(
+        view: View,
+        gridPos: Pair<Int, Int>,
+        cellW: Float,
+        cellH: Float,
+        offsetX: Float,
+        offsetY: Float,
+        duration: Long
+    ) {
+        val targetX = offsetX + (gridPos.first * cellW) + (cellW - view.width) / 2
+        val targetY = offsetY + (gridPos.second * cellH) + (cellH - view.height) / 2
+
+        view.animate()
+            .x(targetX)
+            .y(targetY)
+            .setDuration(duration)
+            .setInterpolator(LinearInterpolator())
+            .start()
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoBoardConfig.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+object LudoBoardConfig {
+    const val GRID_SIZE = 15
+
+    // ==========================================
+    // OWNER FIX: Dynamic Token Spread System
+    // Change this one number to push tokens closer together or further apart.
+    // 1.35f is mathematically ideal for a standard 15x15 board graphic.
+    const val TOKEN_SPREAD = 0.75f
+    // ==========================================
+
+    // The exact visual centers of the 6x6 bases on a 15x15 grid
+    private val CENTER_RED = Pair(3.0f, 3.0f)     // Top Left
+    private val CENTER_GREEN = Pair(12.0f, 3.0f)  // Top Right
+    private val CENTER_BLUE = Pair(12.0f, 12.0f)  // Bottom Right
+    private val CENTER_YELLOW = Pair(3.0f, 12.0f) // Bottom Left
+
+    fun getBasePreciseCoord(playerIndex: Int, tokenIndex: Int): Pair<Float, Float> {
+        val center = when (playerIndex) {
+            0 -> CENTER_RED
+            1 -> CENTER_GREEN
+            2 -> CENTER_BLUE
+            else -> CENTER_YELLOW
+        }
+
+        // Project the 4 tokens evenly around the exact center of the base
+        return when (tokenIndex) {
+            0 -> Pair(center.first - TOKEN_SPREAD, center.second - TOKEN_SPREAD) // Top Left
+            1 -> Pair(center.first + TOKEN_SPREAD, center.second - TOKEN_SPREAD) // Top Right
+            2 -> Pair(center.first - TOKEN_SPREAD, center.second + TOKEN_SPREAD) // Bottom Left
+            else -> Pair(center.first + TOKEN_SPREAD, center.second + TOKEN_SPREAD) // Bottom Right
+        }
+    }
+
+    // --- GLOBAL SAFE ZONES ---
+    val SAFE_ZONES = setOf(
+        Pair(1, 6),  // Red Start
+        Pair(8, 1),  // Green Start
+        Pair(6, 13), // Yellow Start
+        Pair(13, 8), // Blue Start
+        Pair(2, 8), Pair(6, 2), Pair(12, 6), Pair(8, 12)
+    )
+
+    // --- PATHS ---
+    val PATH_RED = listOf(
+        Pair(1, 6), Pair(2, 6), Pair(3, 6), Pair(4, 6), Pair(5, 6), Pair(6, 5), Pair(6, 4), Pair(6, 3), Pair(6, 2), Pair(6, 1), Pair(6, 0), Pair(7, 0), Pair(8, 0),
+        Pair(8, 1), Pair(8, 2), Pair(8, 3), Pair(8, 4), Pair(8, 5), Pair(9, 6), Pair(10, 6), Pair(11, 6), Pair(12, 6), Pair(13, 6), Pair(14, 6), Pair(14, 7), Pair(14, 8),
+        Pair(13, 8), Pair(12, 8), Pair(11, 8), Pair(10, 8), Pair(9, 8), Pair(8, 9), Pair(8, 10), Pair(8, 11), Pair(8, 12), Pair(8, 13), Pair(8, 14), Pair(7, 14), Pair(6, 14),
+        Pair(6, 13), Pair(6, 12), Pair(6, 11), Pair(6, 10), Pair(6, 9), Pair(5, 8), Pair(4, 8), Pair(3, 8), Pair(2, 8), Pair(1, 8), Pair(0, 8), Pair(0, 7),
+        Pair(1, 7), Pair(2, 7), Pair(3, 7), Pair(4, 7), Pair(5, 7), Pair(6, 7)
+    )
+
+    val PATH_GREEN = listOf(
+        Pair(8, 1), Pair(8, 2), Pair(8, 3), Pair(8, 4), Pair(8, 5), Pair(9, 6), Pair(10, 6), Pair(11, 6), Pair(12, 6), Pair(13, 6), Pair(14, 6), Pair(14, 7), Pair(14, 8),
+        Pair(13, 8), Pair(12, 8), Pair(11, 8), Pair(10, 8), Pair(9, 8), Pair(8, 9), Pair(8, 10), Pair(8, 11), Pair(8, 12), Pair(8, 13), Pair(8, 14), Pair(7, 14), Pair(6, 14),
+        Pair(6, 13), Pair(6, 12), Pair(6, 11), Pair(6, 10), Pair(6, 9), Pair(5, 8), Pair(4, 8), Pair(3, 8), Pair(2, 8), Pair(1, 8), Pair(0, 8), Pair(0, 7), Pair(0, 6),
+        Pair(1, 6), Pair(2, 6), Pair(3, 6), Pair(4, 6), Pair(5, 6), Pair(6, 5), Pair(6, 4), Pair(6, 3), Pair(6, 2), Pair(6, 1), Pair(6, 0), Pair(7, 0),
+        Pair(7, 1), Pair(7, 2), Pair(7, 3), Pair(7, 4), Pair(7, 5), Pair(7, 6)
+    )
+
+    val PATH_BLUE = listOf(
+        Pair(13, 8), Pair(12, 8), Pair(11, 8), Pair(10, 8), Pair(9, 8), Pair(8, 9), Pair(8, 10), Pair(8, 11), Pair(8, 12), Pair(8, 13), Pair(8, 14), Pair(7, 14), Pair(6, 14),
+        Pair(6, 13), Pair(6, 12), Pair(6, 11), Pair(6, 10), Pair(6, 9), Pair(5, 8), Pair(4, 8), Pair(3, 8), Pair(2, 8), Pair(1, 8), Pair(0, 8), Pair(0, 7), Pair(0, 6),
+        Pair(1, 6), Pair(2, 6), Pair(3, 6), Pair(4, 6), Pair(5, 6), Pair(6, 5), Pair(6, 4), Pair(6, 3), Pair(6, 2), Pair(6, 1), Pair(6, 0), Pair(7, 0), Pair(8, 0),
+        Pair(8, 1), Pair(8, 2), Pair(8, 3), Pair(8, 4), Pair(8, 5), Pair(9, 6), Pair(10, 6), Pair(11, 6), Pair(12, 6), Pair(13, 6), Pair(14, 6), Pair(14, 7),
+        Pair(13, 7), Pair(12, 7), Pair(11, 7), Pair(10, 7), Pair(9, 7), Pair(8, 7)
+    )
+
+    val PATH_YELLOW = listOf(
+        Pair(6, 13), Pair(6, 12), Pair(6, 11), Pair(6, 10), Pair(6, 9), Pair(5, 8), Pair(4, 8), Pair(3, 8), Pair(2, 8), Pair(1, 8), Pair(0, 8), Pair(0, 7), Pair(0, 6),
+        Pair(1, 6), Pair(2, 6), Pair(3, 6), Pair(4, 6), Pair(5, 6), Pair(6, 5), Pair(6, 4), Pair(6, 3), Pair(6, 2), Pair(6, 1), Pair(6, 0), Pair(7, 0), Pair(8, 0),
+        Pair(8, 1), Pair(8, 2), Pair(8, 3), Pair(8, 4), Pair(8, 5), Pair(9, 6), Pair(10, 6), Pair(11, 6), Pair(12, 6), Pair(13, 6), Pair(14, 6), Pair(14, 7), Pair(14, 8),
+        Pair(13, 8), Pair(12, 8), Pair(11, 8), Pair(10, 8), Pair(9, 8), Pair(8, 9), Pair(8, 10), Pair(8, 11), Pair(8, 12), Pair(8, 13), Pair(8, 14), Pair(7, 14),
+        Pair(7, 13), Pair(7, 12), Pair(7, 11), Pair(7, 10), Pair(7, 9), Pair(7, 8)
+    )
+
+    fun getGlobalCoord(playerIndex: Int, stepIndex: Int): Pair<Int, Int>? {
+        if (stepIndex < 0 || stepIndex > 56) return null
+        val path = when(playerIndex) {
+            0 -> PATH_RED
+            1 -> PATH_GREEN
+            2 -> PATH_BLUE
+            else -> PATH_YELLOW
+        }
+        if (stepIndex >= path.size) return null
+        return path.get(stepIndex)
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoBotEngine.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+class LudoBotEngine(private val ruleEngine: LudoRuleEngine) {
+
+    fun getBestMove(
+        activePlayerIdx: Int,
+        diceRoll: Int,
+        allPlayers: List<LudoPlayer>,
+        dynamicSafeZone: Pair<Int, Int>?
+    ): Int? {
+        val player = allPlayers[activePlayerIdx]
+        var bestTokenIdx: Int? = null
+        var highestScore = -9999
+
+        for (tIdx in 0 until player.tokenCount) {
+            val currentPos = player.tokenPositions[tIdx]
+            val res = ruleEngine.calculateMove(activePlayerIdx, tIdx, currentPos, diceRoll, allPlayers, dynamicSafeZone)
+
+            if (res is LudoRuleEngine.MoveResult.Invalid) continue
+
+            var score = 0
+
+            // 1. Evaluate the Tactical Outcome
+            when (res) {
+                is LudoRuleEngine.MoveResult.Win -> score += 5000
+                is LudoRuleEngine.MoveResult.Kill -> score += 2000
+                is LudoRuleEngine.MoveResult.StarCollected -> score += 1000
+                is LudoRuleEngine.MoveResult.ShieldBreak -> score += 800
+                is LudoRuleEngine.MoveResult.SafeZoneLanded -> score += 500
+                is LudoRuleEngine.MoveResult.SafeStack -> score += 400
+                is LudoRuleEngine.MoveResult.MoveOnly -> {
+                    if (currentPos == -1) {
+                        score += 600 // Priority to get tokens on the board
+                    } else {
+                        score += (currentPos + diceRoll) * 2 // Push advanced tokens further
+                    }
+                }
+                else -> {}
+            }
+
+            // 2. Evaluate the Risk (Defensive play)
+            if (currentPos in 0..55) {
+                val currentGlobal = LudoBoardConfig.getGlobalCoord(activePlayerIdx, currentPos)
+                if (currentGlobal != null && LudoBoardConfig.SAFE_ZONES.contains(currentGlobal)) {
+                    // Penalize leaving a safe zone if it's just a normal move
+                    if (res is LudoRuleEngine.MoveResult.MoveOnly) {
+                        score -= 300
+                    }
+                }
+            }
+
+            // Keep track of the highest scoring move
+            if (score > highestScore) {
+                highestScore = score
+                bestTokenIdx = tIdx
+            }
+        }
+        return bestTokenIdx
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoGameStateHolder.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+object LudoGameStateHolder {
+    var hasActiveGame: Boolean = false
+    var players: List<LudoPlayer> = emptyList()
+    var activePlayerIndex: Int = 0
+    var diceValue: Int = 0
+    var gameState: LudoViewModel.State = LudoViewModel.State.SETUP_THEME
+    var statusMessage: String = "Select Board"
+    var rankCounter: Int = 0
+    var finishedPlayerIds: MutableSet<Int> = mutableSetOf()
+
+    var timerSeconds: Int = 30
+    var dynamicSafeZone: Pair<Int, Int>? = null // OWNER FIX: Only one star allowed
+
+    fun saveState(
+        _players: List<LudoPlayer>,
+        _activeIdx: Int,
+        _dice: Int,
+        _state: LudoViewModel.State,
+        _msg: String,
+        _rank: Int,
+        _finished: Set<Int>,
+        _timer: Int,
+        _dynamicSafeZone: Pair<Int, Int>?
+    ) {
+        players = _players
+        activePlayerIndex = _activeIdx
+        diceValue = _dice
+        gameState = if (_state == LudoViewModel.State.ANIMATING) LudoViewModel.State.WAITING_FOR_ROLL else _state
+        statusMessage = _msg
+        rankCounter = _rank
+        finishedPlayerIds = _finished.toMutableSet()
+        timerSeconds = _timer
+        dynamicSafeZone = _dynamicSafeZone
+        hasActiveGame = true
+    }
+
+    fun clear() {
+        hasActiveGame = false
+        players = emptyList()
+        activePlayerIndex = 0
+        diceValue = 0
+        gameState = LudoViewModel.State.SETUP_THEME
+        rankCounter = 0
+        finishedPlayerIds.clear()
+        statusMessage = "Select Board"
+        timerSeconds = 30
+        dynamicSafeZone = null
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoMatchConfig.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+data class LudoMatchConfig(
+    val playerCount: Int = 4
+)
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoPlayer.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+data class LudoPlayer(
+    val id: Int,
+    val colorName: String,
+    val tokenCount: Int = 4,
+    val tokenPositions: MutableList<Int> = MutableList(tokenCount) { -1 },
+    val tokenShields: MutableList<Boolean> = MutableList(tokenCount) { false },
+    var kills: Int = 0,
+    var deaths: Int = 0,
+    var sixesRolled: Int = 0,
+    val isBot: Boolean = false // NEW FLAG FOR AI
+) {
+    fun getFinishedCount(): Int = tokenPositions.count { it == 56 }
+    fun isTokenInBase(index: Int): Boolean = tokenPositions.get(index) == -1
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoRuleEngine.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+class LudoRuleEngine {
+
+    sealed class MoveResult(val givesExtraTurn: Boolean = false) {
+        object Invalid : MoveResult()
+        data class MoveOnly(val newPosIndex: Int) : MoveResult()
+        data class Kill(val newPosIndex: Int, val victimPlayerIdx: Int, val victimTokenIdx: Int) : MoveResult(true)
+        data class Win(val newPosIndex: Int) : MoveResult(true)
+        data class SafeStack(val newPosIndex: Int) : MoveResult()
+        data class SafeZoneLanded(val newPosIndex: Int) : MoveResult()
+        data class StarCollected(val newPosIndex: Int) : MoveResult()
+        data class ShieldBreak(val newPosIndex: Int, val victimPlayerIdx: Int, val victimTokenIdx: Int) : MoveResult()
+    }
+
+    fun calculateMove(
+        activePlayerIdx: Int,
+        tokenIndex: Int,
+        currentPos: Int,
+        diceRoll: Int,
+        allPlayers: List<LudoPlayer>,
+        dynamicSafeZone: Pair<Int, Int>?
+    ): MoveResult {
+        val player = allPlayers.get(activePlayerIdx)
+        val tokensActiveOnBoard = player.tokenPositions.count { it in 0..55 }
+
+        if (currentPos == -1) {
+            val canSpawnOnSix = (diceRoll == 6)
+            val canSpawnOnOne = (diceRoll == 1 && tokensActiveOnBoard == 0)
+
+            if (canSpawnOnSix || canSpawnOnOne) {
+                val startPos = 0
+                val collision = checkCollision(activePlayerIdx, startPos, allPlayers)
+                if (collision != null) return MoveResult.SafeStack(startPos)
+                return MoveResult.MoveOnly(startPos)
+            } else {
+                return MoveResult.Invalid
+            }
+        }
+
+        val targetPos = currentPos + diceRoll
+        if (targetPos > 56) return MoveResult.Invalid
+        if (targetPos == 56) return MoveResult.Win(56)
+
+        val targetGlobal = LudoBoardConfig.getGlobalCoord(activePlayerIdx, targetPos)
+            ?: return MoveResult.MoveOnly(targetPos)
+
+        val isStaticSafe = LudoBoardConfig.SAFE_ZONES.contains(targetGlobal)
+        val isDynamicSafe = (dynamicSafeZone == targetGlobal)
+        val collision = checkCollision(activePlayerIdx, targetPos, allPlayers)
+
+        if (collision != null) {
+            val (victimP, victimT) = collision
+
+            if (isEnemyBlock(activePlayerIdx, targetPos, allPlayers) || isStaticSafe) {
+                return MoveResult.SafeStack(targetPos)
+            }
+
+            if (allPlayers.get(victimP).tokenShields.get(victimT)) {
+                return MoveResult.ShieldBreak(targetPos, victimP, victimT)
+            }
+
+            return MoveResult.Kill(targetPos, victimP, victimT)
+        }
+
+        if (isDynamicSafe) {
+            return MoveResult.StarCollected(targetPos)
+        }
+
+        if (isStaticSafe) {
+            return MoveResult.SafeZoneLanded(targetPos)
+        }
+
+        return MoveResult.MoveOnly(targetPos)
+    }
+
+    private fun checkCollision(activePIdx: Int, targetPos: Int, allPlayers: List<LudoPlayer>): Pair<Int, Int>? {
+        val targetGlobal = LudoBoardConfig.getGlobalCoord(activePIdx, targetPos) ?: return null
+        for (enemy in allPlayers) {
+            if (enemy.id == (activePIdx + 1)) continue
+            for (i in enemy.tokenPositions.indices) {
+                val enemyPos = enemy.tokenPositions.get(i)
+                if (enemyPos !in 0..50) continue
+                val enemyGlobal = LudoBoardConfig.getGlobalCoord(enemy.id - 1, enemyPos)
+                if (targetGlobal == enemyGlobal) return Pair(enemy.id - 1, i)
+            }
+        }
+        return null
+    }
+
+    private fun isEnemyBlock(activePIdx: Int, targetPos: Int, allPlayers: List<LudoPlayer>): Boolean {
+        val targetGlobal = LudoBoardConfig.getGlobalCoord(activePIdx, targetPos) ?: return false
+        var enemyCount = 0
+        for (enemy in allPlayers) {
+            if (enemy.id == (activePIdx + 1)) continue
+            for (pos in enemy.tokenPositions) {
+                if (pos !in 0..50) continue
+                val enemyGlobal = LudoBoardConfig.getGlobalCoord(enemy.id - 1, pos)
+                if (targetGlobal == enemyGlobal) enemyCount++
+            }
+        }
+        return enemyCount > 1
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\ludogame\LudoViewModel.kt
+################################################################
+
+
+package com.bytemantis.snald.ludogame
+
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+class LudoViewModel : ViewModel() {
+
+    // ADDED SETUP_BOTS
+    enum class State { SETUP_THEME, SETUP_PLAYERS, SETUP_BOTS, SETUP_TOKENS, WAITING_FOR_ROLL, WAITING_FOR_MOVE, ANIMATING, GAME_OVER }
+    enum class AnnouncementType { TOKEN_GOAL, PLAYER_VICTORY }
+    data class Announcement(val message: String, val type: AnnouncementType, val playerId: Int = -1)
+
+    data class TurnUpdate(val playerIdx: Int, val tokenIdx: Int, val visualSteps: Int, val isSpawn: Boolean, val soundToPlay: SoundType, val killInfo: KillInfo?)
+    enum class SoundType { NONE, SAFE, KILL, WIN, STAR_COLLECT, SHIELD_BREAK }
+    data class KillInfo(val victimPlayerIdx: Int, val victimTokenIdx: Int, val fromPos: Int)
+
+    private val _gameState = MutableLiveData<State>()
+    val gameState: LiveData<State> = _gameState
+
+    private val _players = MutableLiveData<List<LudoPlayer>>()
+    val players: LiveData<List<LudoPlayer>> = _players
+
+    private val _activePlayerIndex = MutableLiveData(0)
+    val activePlayerIndex: LiveData<Int> = _activePlayerIndex
+
+    private val _diceValue = MutableLiveData<Int>()
+    val diceValue: LiveData<Int> = _diceValue
+
+    private val _statusMessage = MutableLiveData<String>()
+    val statusMessage: LiveData<String> = _statusMessage
+
+    private val _turnUpdate = MutableLiveData<TurnUpdate?>()
+    val turnUpdate: LiveData<TurnUpdate?> = _turnUpdate
+
+    private val _announcement = MutableLiveData<Announcement?>()
+    val announcement: LiveData<Announcement?> = _announcement
+
+    private val _timerSeconds = MutableLiveData<Int>(30)
+    val timerSeconds: LiveData<Int> = _timerSeconds
+
+    private val _dynamicSafeZone = MutableLiveData<Pair<Int, Int>?>(null)
+    val dynamicSafeZone: LiveData<Pair<Int, Int>?> = _dynamicSafeZone
+
+    private val _statsUpdate = MutableLiveData<Unit>()
+    val statsUpdate: LiveData<Unit> = _statsUpdate
+
+    private val ruleEngine = LudoRuleEngine()
+    private val botEngine = LudoBotEngine(ruleEngine) // INSTANTIATE BOT ENGINE
+
+    var tempPlayerCount = 2
+        private set
+    private var tempBotCount = 0
+    private var currentTokenCount = 1
+    private var rankCounter = 0
+    private var shouldGiveExtraTurn = false
+    private val finishedPlayerIds = mutableSetOf<Int>()
+    private var isGameAbandoned = false
+    private var timerJob: Job? = null
+    private var pendingAnimationEndAction: (() -> Unit)? = null
+
+    init {
+        if (LudoGameStateHolder.hasActiveGame) restoreGame()
+        else _gameState.value = State.SETUP_THEME
+        startTimerLoop()
+    }
+
+    private fun startTimerLoop() {
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (true) {
+                delay(1000)
+                val state = _gameState.value
+                if (state == State.WAITING_FOR_ROLL || state == State.WAITING_FOR_MOVE || state == State.ANIMATING) {
+                    val current = _timerSeconds.value ?: 30
+                    if (current <= 1) {
+                        spawnDynamicSafeZone()
+                        _timerSeconds.value = 30
+                    } else {
+                        _timerSeconds.value = current - 1
+                    }
+                }
+            }
+        }
+    }
+
+    private fun spawnDynamicSafeZone() {
+        val outerPathCoords = (LudoBoardConfig.PATH_RED.take(51) + LudoBoardConfig.PATH_GREEN.take(51) + LudoBoardConfig.PATH_BLUE.take(51) + LudoBoardConfig.PATH_YELLOW.take(51)).toSet()
+        val available = outerPathCoords - LudoBoardConfig.SAFE_ZONES
+        if (available.isNotEmpty()) {
+            _dynamicSafeZone.value = available.random()
+        }
+    }
+
+    // Updated Navigation
+    fun navigateBackInSetup(): Boolean {
+        return when (_gameState.value) {
+            State.SETUP_TOKENS -> { _gameState.value = State.SETUP_BOTS; true }
+            State.SETUP_BOTS -> { _gameState.value = State.SETUP_PLAYERS; true }
+            State.SETUP_PLAYERS -> { _gameState.value = State.SETUP_THEME; true }
+            State.SETUP_THEME -> false
+            else -> false
+        }
+    }
+
+    fun selectTheme() { _gameState.value = State.SETUP_PLAYERS }
+    fun selectPlayerCount(count: Int) { tempPlayerCount = count; _gameState.value = State.SETUP_BOTS }
+    fun selectBotCount(count: Int) { tempBotCount = count; _gameState.value = State.SETUP_TOKENS }
+
+    fun startGame(tokenCount: Int) {
+        currentTokenCount = tokenCount
+        val colors = listOf("RED", "GREEN", "BLUE", "YELLOW")
+        val humanCount = tempPlayerCount - tempBotCount
+
+        // Brand the bots with a robot emoji
+        val newPlayers = (0 until tempPlayerCount).map { i ->
+            val isBot = i >= humanCount
+            val prefix = if (isBot) "🤖 " else ""
+            LudoPlayer(i + 1, "$prefix${colors[i]}", currentTokenCount, isBot = isBot)
+        }
+
+        _players.value = newPlayers
+        _activePlayerIndex.value = 0
+        finishedPlayerIds.clear()
+        rankCounter = 0
+        isGameAbandoned = false
+        _timerSeconds.value = 30
+        _dynamicSafeZone.value = null
+
+        _gameState.value = State.WAITING_FOR_ROLL
+        _statusMessage.value = "${newPlayers[0].colorName}'s Turn"
+        saveCurrentState()
+        triggerBotIfActive() // CHECK IF BOT GOES FIRST
+    }
+
+    private fun restoreGame() {
+        _players.value = LudoGameStateHolder.players
+        _activePlayerIndex.value = LudoGameStateHolder.activePlayerIndex
+        _diceValue.value = LudoGameStateHolder.diceValue
+        _gameState.value = LudoGameStateHolder.gameState
+        _statusMessage.value = LudoGameStateHolder.statusMessage
+        rankCounter = LudoGameStateHolder.rankCounter
+        finishedPlayerIds.clear()
+        finishedPlayerIds.addAll(LudoGameStateHolder.finishedPlayerIds)
+        currentTokenCount = _players.value?.firstOrNull()?.tokenCount ?: 4
+        isGameAbandoned = false
+        _timerSeconds.value = LudoGameStateHolder.timerSeconds
+        _dynamicSafeZone.value = LudoGameStateHolder.dynamicSafeZone
+        triggerBotIfActive()
+    }
+
+    fun saveCurrentState() {
+        if (isGameAbandoned) return
+        val p = _players.value ?: return
+        LudoGameStateHolder.saveState(p, _activePlayerIndex.value ?: 0, _diceValue.value ?: 0, _gameState.value ?: State.WAITING_FOR_ROLL, _statusMessage.value ?: "", rankCounter, finishedPlayerIds, _timerSeconds.value ?: 30, _dynamicSafeZone.value)
+    }
+
+    // The Master Bot Trigger
+    private fun triggerBotIfActive() {
+        val p = _players.value?.get(_activePlayerIndex.value ?: 0) ?: return
+        if (p.isBot && _gameState.value == State.WAITING_FOR_ROLL) {
+            viewModelScope.launch {
+                delay(1200) // "Thinking" delay
+                rollDice()
+            }
+        }
+    }
+
+    fun rollDice() {
+        if (_gameState.value != State.WAITING_FOR_ROLL) return
+        _gameState.value = State.ANIMATING
+        shouldGiveExtraTurn = false
+
+        val roll = (1..6).random()
+        _diceValue.value = roll
+
+        val pIdx = _activePlayerIndex.value!!
+        val pList = _players.value!!
+        val p = pList[pIdx]
+
+        if (roll == 6) {
+            p.sixesRolled++
+            shouldGiveExtraTurn = true
+            _statsUpdate.value = Unit
+        }
+
+        viewModelScope.launch {
+            delay(600)
+            val valid = (0 until currentTokenCount).filter {
+                ruleEngine.calculateMove(pIdx, it, p.tokenPositions.get(it), roll, _players.value!!, _dynamicSafeZone.value) !is LudoRuleEngine.MoveResult.Invalid
+            }
+
+            if (valid.isNotEmpty()) {
+                if (valid.size == 1) {
+                    onTokenClicked(valid.get(0))
+                } else {
+                    if (p.isBot) {
+                        val bestMove = botEngine.getBestMove(pIdx, roll, _players.value!!, _dynamicSafeZone.value)
+                        delay(800) // Delay to simulate "deciding" which token to move
+                        if (bestMove != null) onTokenClicked(bestMove)
+                    } else {
+                        _gameState.value = State.WAITING_FOR_MOVE
+                        _statusMessage.value = "Select Token"
+                    }
+                }
+            } else {
+                shouldGiveExtraTurn = false
+                delay(800)
+                passTurn()
+            }
+        }
+    }
+
+    fun onTokenClicked(tIdx: Int) {
+        if (_gameState.value != State.WAITING_FOR_MOVE && _gameState.value != State.ANIMATING) return
+        val pIdx = _activePlayerIndex.value!!
+        val pList = _players.value!!
+        val p = pList[pIdx]
+        val roll = _diceValue.value!!
+        val res = ruleEngine.calculateMove(pIdx, tIdx, p.tokenPositions.get(tIdx), roll, pList, _dynamicSafeZone.value)
+
+        if (res is LudoRuleEngine.MoveResult.Invalid) return
+        _gameState.value = State.ANIMATING
+        if (res.givesExtraTurn) shouldGiveExtraTurn = true
+
+        val isSpawn = p.tokenPositions.get(tIdx) == -1
+        var sound = SoundType.NONE
+        var kill: KillInfo? = null
+
+        when(res) {
+            is LudoRuleEngine.MoveResult.MoveOnly -> p.tokenPositions.set(tIdx, res.newPosIndex)
+            is LudoRuleEngine.MoveResult.SafeZoneLanded -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.SafeStack -> { p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SAFE }
+            is LudoRuleEngine.MoveResult.StarCollected -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.STAR_COLLECT
+                pendingAnimationEndAction = { p.tokenShields.set(tIdx, true); _dynamicSafeZone.value = null; _announcement.value = Announcement("SHIELD ACQUIRED!", AnnouncementType.TOKEN_GOAL, p.id) }
+            }
+            is LudoRuleEngine.MoveResult.ShieldBreak -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex); sound = SoundType.SHIELD_BREAK
+                pendingAnimationEndAction = { pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false); _announcement.value = Announcement("SHIELD BROKEN!", AnnouncementType.TOKEN_GOAL, p.id) }
+            }
+            is LudoRuleEngine.MoveResult.Kill -> {
+                p.tokenPositions.set(tIdx, res.newPosIndex)
+                pList[res.victimPlayerIdx].tokenPositions.set(res.victimTokenIdx, -1)
+                pList[res.victimPlayerIdx].tokenShields.set(res.victimTokenIdx, false)
+                kill = KillInfo(res.victimPlayerIdx, res.victimTokenIdx, -1)
+                sound = SoundType.KILL; p.kills++; pList[res.victimPlayerIdx].deaths++; _statsUpdate.value = Unit
+            }
+            is LudoRuleEngine.MoveResult.Win -> {
+                p.tokenPositions.set(tIdx, 56); sound = SoundType.WIN
+                pendingAnimationEndAction = {
+                    p.tokenShields.set(tIdx, false)
+                    if (p.getFinishedCount() == currentTokenCount) {
+                        rankCounter++; finishedPlayerIds.add(p.id)
+                        _announcement.value = Announcement("${p.colorName} RANK $rankCounter", AnnouncementType.PLAYER_VICTORY, p.id)
+                    } else {
+                        _announcement.value = Announcement("${p.colorName} TOKEN HOME!", AnnouncementType.TOKEN_GOAL, p.id)
+                    }
+                }
+            }
+            else -> {}
+        }
+        _turnUpdate.value = TurnUpdate(pIdx, tIdx, if (isSpawn) 0 else roll, isSpawn, sound, kill)
+    }
+
+    fun clearAnnouncement() { _announcement.value = null }
+
+    fun onTurnAnimationsFinished() {
+        _turnUpdate.value = null
+        pendingAnimationEndAction?.invoke()
+        pendingAnimationEndAction = null
+
+        val p = _players.value!!.get(_activePlayerIndex.value!!)
+        val all = _players.value!!
+        val activeCount = all.size - finishedPlayerIds.size
+
+        if (activeCount <= 1) {
+            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
+            return
+        }
+
+        if (finishedPlayerIds.contains(p.id)) {
+            passTurn()
+        } else if (shouldGiveExtraTurn) {
+            _gameState.value = State.WAITING_FOR_ROLL
+            _statusMessage.value = "Extra Turn!"
+            triggerBotIfActive() // BOT COMBO ROLLS
+        } else {
+            passTurn()
+        }
+        saveCurrentState()
+    }
+
+    private fun passTurn() {
+        val all = _players.value!!
+        val activeCount = all.size - finishedPlayerIds.size
+
+        if (activeCount <= 1) {
+            viewModelScope.launch { delay(1000); _gameState.value = State.GAME_OVER; _statusMessage.value = "GAME OVER" }
+            return
+        }
+
+        var next = _activePlayerIndex.value!!
+        var safety = 0
+        do { next = (next + 1) % all.size; safety++ } while (finishedPlayerIds.contains(all.get(next).id) && safety < 10)
+
+        _activePlayerIndex.value = next
+        _gameState.value = State.WAITING_FOR_ROLL
+        _statusMessage.value = "${all.get(next).colorName}'s Turn"
+        saveCurrentState()
+        triggerBotIfActive() // HAND OFF TO NEXT BOT
+    }
+
+    fun quitGame() { isGameAbandoned = true; LudoGameStateHolder.clear() }
+
+    fun getFinalRankings(): List<Pair<String, LudoPlayer>> {
+        val pList = _players.value ?: return emptyList()
+        val rankings = mutableListOf<Pair<String, LudoPlayer>>()
+        var rank = 1
+        for (id in finishedPlayerIds) { val p = pList.find { it.id == id }; if (p != null) rankings.add(Pair("Rank $rank", p)); rank++ }
+        val lastPlayer = pList.find { !finishedPlayerIds.contains(it.id) }
+        if (lastPlayer != null) rankings.add(Pair("Last", lastPlayer))
+        return rankings
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\snaldgame\BoardAdapter.kt
+################################################################
+
+
+package com.bytemantis.snald.snaldgame
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.view.animation.AnimationUtils
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+import com.bytemantis.snald.R
+import com.bytemantis.snald.core.Player
+
+class BoardAdapter : RecyclerView.Adapter<BoardAdapter.SquareViewHolder>() {
+
+    private var playerList: List<Player> = emptyList()
+
+    fun updatePlayers(players: List<Player>) {
+        this.playerList = players
+        notifyDataSetChanged()
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SquareViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_square, parent, false)
+        // Ensure square is perfect grid size
+        view.layoutParams.height = parent.measuredWidth / 10
+        return SquareViewHolder(view)
+    }
+
+    override fun getItemCount(): Int = BoardConfig.BOARD_SIZE
+
+    override fun onBindViewHolder(holder: SquareViewHolder, position: Int) {
+        // Calculate Zig-Zag Position
+        val row = position / 10
+        val col = position % 10
+        val bottomUpRow = 9 - row
+        val squareNumber = if (bottomUpRow % 2 == 0) {
+            (bottomUpRow * 10) + col + 1
+        } else {
+            (bottomUpRow * 10) + (10 - col)
+        }
+
+        holder.bind(squareNumber, playerList)
+    }
+
+    class SquareViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val textNumber: TextView = itemView.findViewById(R.id.text_square_number)
+
+        // Single Token View
+        private val tokenCenter: ImageView = itemView.findViewById(R.id.token_center)
+
+        // Multi Token Views
+        private val smallTokens = listOf<ImageView>(
+            itemView.findViewById(R.id.token_1),
+            itemView.findViewById(R.id.token_2),
+            itemView.findViewById(R.id.token_3),
+            itemView.findViewById(R.id.token_4)
+        )
+
+        fun bind(number: Int, players: List<Player>) {
+            textNumber.visibility = View.GONE
+
+            // RESET ALL VISIBILITY
+            tokenCenter.visibility = View.GONE
+            smallTokens.forEach { it.visibility = View.GONE; it.clearAnimation() }
+
+            // 1. Players on this square
+            val playersHere = players.filter { it.currentPosition == number && !it.isFinished }
+
+            // 2. Pac-Men on this square
+            val pacmenHere = players.filter { it.pacmanPosition == number }
+
+            val totalItems = playersHere + pacmenHere
+
+            if (totalItems.isEmpty()) return
+
+            if (totalItems.size == 1) {
+                // == Single Item Mode ==
+                val item = totalItems[0]
+                tokenCenter.visibility = View.VISIBLE
+                tokenCenter.setColorFilter(item.color) // Tint it P1/P2/P3/P4 color
+
+                if (pacmenHere.contains(item)) {
+                    // [UPDATED] It's a Pac-Man! Use custom image.
+                    tokenCenter.setImageResource(R.drawable.img_pacman)
+                    tokenCenter.rotation = 0f
+                    tokenCenter.scaleX = 1.0f
+                } else {
+                    // Normal Player
+                    tokenCenter.setImageResource(R.drawable.img_token_player)
+                    tokenCenter.rotation = 0f
+                    tokenCenter.scaleX = 1.0f
+
+                    if (item.hasShield) {
+                        val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                        tokenCenter.startAnimation(pulse)
+                    }
+                }
+            } else {
+                // == Multi Mode (Cluster) ==
+                for (i in totalItems.indices) {
+                    if (i < smallTokens.size) {
+                        val tokenView = smallTokens[i]
+                        val item = totalItems[i]
+
+                        tokenView.visibility = View.VISIBLE
+                        tokenView.setColorFilter(item.color)
+
+                        if (pacmenHere.contains(item)) {
+                            // [UPDATED] Pac-Man in small view
+                            tokenView.setImageResource(R.drawable.img_pacman)
+                            tokenView.rotation = 0f
+                        } else {
+                            // Player in small view
+                            tokenView.setImageResource(R.drawable.img_token_player)
+                            tokenView.rotation = 0f
+
+                            if (item.hasShield) {
+                                val pulse = AnimationUtils.loadAnimation(itemView.context, R.anim.aura_pulse)
+                                tokenView.startAnimation(pulse)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\snaldgame\BoardConfig.kt
+################################################################
+
+
+package com.bytemantis.snald.snaldgame
+
+object BoardConfig {
+    const val BOARD_SIZE = 100
+
+    // 🐍 Snakes (Head -> Tail)
+    val SNAKES = mapOf(
+        45 to 4,   // NEW: Giant Snake shifted
+        96 to 93,  // NEW: Small Toxic Snake
+        91 to 73,
+        88 to 85,
+        83 to 57,
+        81 to 61,
+        59 to 40,
+        52 to 32,
+        29 to 10
+    )
+
+    // 🪜 Ladders (Bottom -> Top)
+    val LADDERS = mapOf(
+        62 to 98,
+        51 to 71,
+        48 to 75,
+        27 to 55,
+        19 to 58,
+        7 to 28
+    )
+
+    // ⭐ Stars (Immunity Pickup)
+    val STARS = setOf(20, 37, 54, 79, 94)
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\snaldgame\GameEngine.kt
+################################################################
+
+
+package com.bytemantis.snald.snaldgame
+
+import com.bytemantis.snald.core.Player
+
+class GameEngine {
+
+    // Helper: Generate circular path (100 -> 1 -> 100)
+    fun calculatePacmanPath(startPos: Int, steps: Int): List<Int> {
+        val path = mutableListOf<Int>()
+        var current = startPos
+
+        for (i in 1..steps) {
+            current--
+            if (current < 1) {
+                current = 100 // Loop back to top
+            }
+            path.add(current)
+        }
+        return path
+    }
+
+    fun calculateMove(player: Player, diceValue: Int): MoveResult {
+        var newPosition = player.currentPosition + diceValue
+
+        if (newPosition > BoardConfig.BOARD_SIZE) {
+            return MoveResult.Stay(player.currentPosition, "Overshot!")
+        }
+
+        if (newPosition == BoardConfig.BOARD_SIZE) {
+            return MoveResult.Win(newPosition)
+        }
+
+        // 1. Check for Star
+        if (BoardConfig.STARS.contains(newPosition)) {
+            player.starCount++
+
+            // SINGLE PAC-MAN RULE:
+            // If 2nd star collected, trigger Spawn/Steal immediately.
+            if (player.starCount >= 2) {
+                return MoveResult.PacmanSpawned(newPosition)
+            }
+            return MoveResult.StarCollected(newPosition)
+        }
+
+        // 2. Check for Snakes (Standard Player)
+        if (BoardConfig.SNAKES.containsKey(newPosition)) {
+            val snakeTail = BoardConfig.SNAKES[newPosition]!!
+            if (player.hasShield) {
+                player.starCount-- // Consume shield
+                return MoveResult.StarUsed(newPosition, "Star Shield Used!")
+            } else {
+                return MoveResult.SnakeBite(newPosition, snakeTail)
+            }
+        }
+
+        // 3. Check for Ladders (Standard Player)
+        if (BoardConfig.LADDERS.containsKey(newPosition)) {
+            val ladderTop = BoardConfig.LADDERS[newPosition]!!
+            return MoveResult.LadderClimb(newPosition, ladderTop)
+        }
+
+        return MoveResult.NormalMove(newPosition)
+    }
+
+    // PAC-MAN MOVE LOGIC
+    fun calculatePacmanMove(player: Player, diceValue: Int): PacmanResult {
+        if (player.pacmanPosition == 0) return PacmanResult.NoMove
+
+        val steps = diceValue * 2
+        val path = calculatePacmanPath(player.pacmanPosition, steps)
+        var finalPos = path.last()
+
+        // CHECK VULNERABILITY
+        // 1. Snake
+        if (BoardConfig.SNAKES.containsKey(finalPos)) {
+            val tail = BoardConfig.SNAKES[finalPos]!!
+            return PacmanResult.Move(path, tail, PacmanEvent.SNAKE_BITE)
+        }
+
+        // 2. Ladder
+        if (BoardConfig.LADDERS.containsKey(finalPos)) {
+            val top = BoardConfig.LADDERS[finalPos]!!
+            return PacmanResult.Move(path, top, PacmanEvent.LADDER_CLIMB)
+        }
+
+        return PacmanResult.Move(path, finalPos, PacmanEvent.NORMAL)
+    }
+
+    // Check collisions (Player vs Player)
+    fun checkCollisions(activePlayer: Player, allPlayers: List<Player>): Player? {
+        if (activePlayer.currentPosition == 1 || activePlayer.currentPosition == 100) return null
+        for (enemy in allPlayers) {
+            if (enemy.id != activePlayer.id && !enemy.isFinished && enemy.currentPosition == activePlayer.currentPosition) {
+                return enemy
+            }
+        }
+        return null
+    }
+
+    // RESULT CLASSES
+    sealed class MoveResult {
+        data class NormalMove(val to: Int) : MoveResult()
+        data class SnakeBite(val head: Int, val tail: Int) : MoveResult()
+        data class LadderClimb(val bottom: Int, val top: Int) : MoveResult()
+        data class StarCollected(val at: Int) : MoveResult()
+        data class PacmanSpawned(val at: Int) : MoveResult()
+        data class StarUsed(val at: Int, val msg: String) : MoveResult()
+        data class Stay(val at: Int, val reason: String) : MoveResult()
+        data class Win(val at: Int) : MoveResult()
+    }
+
+    enum class PacmanEvent { NORMAL, SNAKE_BITE, LADDER_CLIMB }
+
+    sealed class PacmanResult {
+        object NoMove : PacmanResult()
+        data class Move(val path: List<Int>, val finalPos: Int, val eventType: PacmanEvent) : PacmanResult()
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\snaldgame\GameViewModel.kt
+################################################################
+
+
+package com.bytemantis.snald.snaldgame
+
+import android.graphics.Color
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import com.bytemantis.snald.core.Player
+
+class GameViewModel : ViewModel() {
+
+    // --- Game State Management (Splash Removed) ---
+    enum class GameState {
+        MENU, PLAYING, PAUSED, GAME_OVER
+    }
+
+    // Start directly in MENU (Setup) state
+    private val _gameState = MutableLiveData<GameState>(GameState.MENU)
+    val gameState: LiveData<GameState> = _gameState
+
+    private val engine = GameEngine()
+
+    private val _players = MutableLiveData<List<Player>>()
+    val players: LiveData<List<Player>> = _players
+
+    private val _activePlayerId = MutableLiveData<Int>()
+    val activePlayerId: LiveData<Int> = _activePlayerId
+
+    private val _lastMoveResult = MutableLiveData<GameEngine.MoveResult>()
+    val lastMoveResult: LiveData<GameEngine.MoveResult> = _lastMoveResult
+
+    private val _pacmanMoveResult = MutableLiveData<GameEngine.PacmanResult>()
+    val pacmanMoveResult: LiveData<GameEngine.PacmanResult> = _pacmanMoveResult
+
+    private val _diceValue = MutableLiveData<Int>()
+    val diceValue: LiveData<Int> = _diceValue
+
+    private val _collisionEvent = MutableLiveData<Pair<Player, Int>?>()
+    val collisionEvent: LiveData<Pair<Player, Int>?> = _collisionEvent
+
+    private val _gameOver = MutableLiveData<Boolean>()
+    val gameOver: LiveData<Boolean> = _gameOver
+
+    private var turnIndex = 0
+    var isAnimationLocked = false
+    private var currentTurnRoll = 0
+
+    // --- Back Key Logic ---
+    fun handleBackPress() {
+        when (_gameState.value) {
+            GameState.PLAYING -> _gameState.value = GameState.PAUSED
+            GameState.PAUSED -> _gameState.value = GameState.PLAYING
+            GameState.GAME_OVER -> _gameState.value = GameState.MENU
+            else -> { /* Handled by Activity */ }
+        }
+    }
+
+    fun resumeGame() {
+        if (_gameState.value == GameState.PAUSED) {
+            _gameState.value = GameState.PLAYING
+        }
+    }
+
+    fun quitToMenu() {
+        _gameState.value = GameState.MENU
+    }
+
+    fun startGame(playerCount: Int) {
+        val newPlayers = ArrayList<Player>()
+        newPlayers.add(Player(1, "P1", Color.RED))
+        if (playerCount >= 2) newPlayers.add(Player(2, "P2", Color.BLUE))
+        if (playerCount >= 3) newPlayers.add(Player(3, "P3", Color.GREEN))
+        if (playerCount >= 4) newPlayers.add(Player(4, "P4", Color.YELLOW))
+
+        _players.value = newPlayers
+        turnIndex = 0
+        _activePlayerId.value = newPlayers[0].id
+        _gameOver.value = false
+        isAnimationLocked = false
+
+        _gameState.value = GameState.PLAYING
+    }
+
+    fun assignPacmanTo(newOwnerId: Int) {
+        val currentList = _players.value ?: return
+        currentList.forEach { it.pacmanPosition = 0 }
+        val owner = currentList.find { it.id == newOwnerId }
+        owner?.pacmanPosition = 100
+        _players.value = currentList
+    }
+
+    fun rollDiceForActivePlayer() {
+        if (isAnimationLocked) return
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+
+        if (activePlayer.isFinished) {
+            nextTurn()
+            return
+        }
+
+        currentTurnRoll = (1..6).random()
+        _diceValue.value = currentTurnRoll
+
+        val result = engine.calculateMove(activePlayer, currentTurnRoll)
+
+        if (result is GameEngine.MoveResult.PacmanSpawned) {
+            assignPacmanTo(activePlayer.id)
+        }
+
+        _lastMoveResult.value = result
+    }
+
+    fun onPlayerMoveFinished(finalPos: Int) {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+
+        activePlayer.currentPosition = finalPos
+
+        if (finalPos == 100) {
+            activePlayer.isFinished = true
+            if (activePlayer.pacmanPosition > 0) {
+                activePlayer.pacmanPosition = 0
+                transferPacmanToLowest(currentList)
+            }
+        }
+
+        if (activePlayer.isPacmanActive) {
+            val pacResult = engine.calculatePacmanMove(activePlayer, currentTurnRoll)
+            _pacmanMoveResult.value = pacResult
+        } else {
+            finalizeTurn()
+        }
+    }
+
+    private fun transferPacmanToLowest(allPlayers: List<Player>) {
+        val heir = allPlayers.filter { !it.isFinished }.minByOrNull { it.currentPosition }
+        if (heir != null) {
+            assignPacmanTo(heir.id)
+        }
+    }
+
+    fun onPacmanMoveFinished(newPacPos: Int) {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+        activePlayer.pacmanPosition = newPacPos
+        _players.value = currentList
+        finalizeTurn()
+    }
+
+    private fun finalizeTurn() {
+        val currentList = _players.value ?: return
+        val activePlayer = currentList[turnIndex]
+        var enemy = engine.checkCollisions(activePlayer, currentList)
+
+        if (enemy != null) {
+            if (enemy.hasShield) {
+                enemy.starCount--
+                _collisionEvent.value = null
+                checkWinConditionOrNextTurn()
+            } else {
+                if (enemy.isPacmanActive) {
+                    assignPacmanTo(activePlayer.id)
+                }
+                val fatalPos = enemy.currentPosition
+                isAnimationLocked = true
+                _collisionEvent.value = Pair(enemy, fatalPos)
+            }
+        } else {
+            checkWinConditionOrNextTurn()
+        }
+    }
+
+    private fun checkWinConditionOrNextTurn() {
+        if (_gameOver.value == true) return
+        val currentList = _players.value ?: return
+        val activePlayersCount = currentList.count { !it.isFinished }
+        if (activePlayersCount <= 1) {
+            _gameOver.value = true
+            _gameState.value = GameState.GAME_OVER
+        } else {
+            nextTurn()
+        }
+    }
+
+    fun finalizeKill(killedPlayerId: Int) {
+        val currentList = _players.value ?: return
+        val enemy = currentList.find { it.id == killedPlayerId } ?: return
+        enemy.currentPosition = 1
+        _players.value = currentList
+        isAnimationLocked = false
+        _collisionEvent.value = null
+        checkWinConditionOrNextTurn()
+    }
+
+    private fun nextTurn() {
+        val currentList = _players.value ?: return
+        var nextIndex = (turnIndex + 1) % currentList.size
+        while (currentList[nextIndex].isFinished) {
+            nextIndex = (nextIndex + 1) % currentList.size
+            if (currentList.all { it.isFinished }) break
+        }
+        turnIndex = nextIndex
+        _activePlayerId.value = currentList[turnIndex].id
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\java\com\bytemantis\snald\snaldgame\SnaldActivity.kt
+################################################################
+
+
+package com.bytemantis.snald.snaldgame
+
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.net.Uri
+import android.os.Bundle
+import android.view.View
+import android.view.animation.AnimationUtils
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.TextView
+import android.widget.Toast
+import android.widget.VideoView
+import android.widget.LinearLayout
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.bytemantis.snald.R
+import com.bytemantis.snald.core.Player
+import com.bytemantis.snald.core.SoundManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+
+class SnaldActivity : AppCompatActivity() {
+
+    private val viewModel: GameViewModel by viewModels()
+    private val adapter = BoardAdapter()
+    private lateinit var soundManager: SoundManager
+
+    private lateinit var recyclerBoard: RecyclerView
+    private lateinit var diceViews: Map<Int, ImageView>
+    private lateinit var statusText: TextView
+
+    // Overlays & Layouts
+    private lateinit var textOverlayPop: TextView
+    private lateinit var imgOverlayPop: ImageView
+    private lateinit var videoOverlayPop: VideoView
+    private lateinit var floatingToken: ImageView
+
+    // Screens (Splash removed)
+    private lateinit var setupLayout: LinearLayout
+    private lateinit var gameOverLayout: LinearLayout
+    private lateinit var pauseLayout: LinearLayout
+
+    private var isAnimatingMove = false
+    private var currentVisualPosition = 1
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // We still use activity_main.xml as the layout for Snald for now
+        setContentView(R.layout.activity_main)
+        soundManager = SoundManager(this)
+
+        setupUI()
+        setupObservers()
+        setupBackPressLogic()
+    }
+
+    private fun setupBackPressLogic() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val state = viewModel.gameState.value
+                when (state) {
+                    GameViewModel.GameState.PLAYING -> viewModel.handleBackPress()
+                    GameViewModel.GameState.PAUSED -> viewModel.handleBackPress()
+                    GameViewModel.GameState.MENU -> finish() // Return to Hub
+                    GameViewModel.GameState.GAME_OVER -> finish() // Return to Hub
+                    else -> finish()
+                }
+            }
+        })
+    }
+
+    private fun setupUI() {
+        recyclerBoard = findViewById(R.id.recycler_board)
+        recyclerBoard.layoutManager = GridLayoutManager(this, 10)
+        recyclerBoard.adapter = adapter
+
+        diceViews = mapOf(
+            1 to findViewById(R.id.dice_p1),
+            2 to findViewById(R.id.dice_p2),
+            3 to findViewById(R.id.dice_p3),
+            4 to findViewById(R.id.dice_p4)
+        )
+
+        statusText = findViewById(R.id.text_main_status)
+        textOverlayPop = findViewById(R.id.text_overlay_pop)
+        imgOverlayPop = findViewById(R.id.img_overlay_pop)
+        videoOverlayPop = findViewById(R.id.video_overlay_pop)
+        floatingToken = findViewById(R.id.floating_token)
+
+        setupLayout = findViewById(R.id.layout_setup)
+        gameOverLayout = findViewById(R.id.layout_game_over)
+        pauseLayout = findViewById(R.id.layout_pause)
+
+        findViewById<Button>(R.id.btn_2_players).setOnClickListener { viewModel.startGame(2) }
+        findViewById<Button>(R.id.btn_3_players).setOnClickListener { viewModel.startGame(3) }
+        findViewById<Button>(R.id.btn_4_players).setOnClickListener { viewModel.startGame(4) }
+
+        findViewById<Button>(R.id.btn_resume).setOnClickListener { viewModel.resumeGame() }
+        findViewById<Button>(R.id.btn_quit).setOnClickListener { finish() } // Quit returns to Hub
+        findViewById<Button>(R.id.btn_restart).setOnClickListener { viewModel.quitToMenu() } // Restarts local game
+
+        diceViews.forEach { (id, view) ->
+            view.setOnClickListener {
+                if (!isAnimatingMove && !viewModel.isAnimationLocked && viewModel.activePlayerId.value == id) {
+                    val player = viewModel.players.value?.find { it.id == id } ?: return@setOnClickListener
+                    currentVisualPosition = player.currentPosition
+                    isAnimatingMove = true
+                    viewModel.rollDiceForActivePlayer()
+                }
+            }
+        }
+    }
+
+    private fun setupObservers() {
+        viewModel.gameState.observe(this) { state ->
+            updateScreenState(state)
+        }
+
+        viewModel.players.observe(this) { players ->
+            if (!isAnimatingMove && !viewModel.isAnimationLocked) {
+                adapter.updatePlayers(players)
+            }
+        }
+
+        viewModel.diceValue.observe(this) { dice ->
+            val activeId = viewModel.activePlayerId.value ?: return@observe
+            val activeDiceView = diceViews[activeId] ?: return@observe
+
+            soundManager.playDiceRoll()
+            updateDiceImage(activeDiceView, dice)
+            resetDiceOpacity()
+            activeDiceView.alpha = 1.0f
+
+            activeDiceView.animate().rotationBy(720f).setDuration(500).withEndAction {
+                animateHoppingMovement(dice)
+            }.start()
+        }
+
+        viewModel.activePlayerId.observe(this) { id ->
+            updateStatusText(id)
+            highlightActiveDice(id)
+        }
+
+        viewModel.collisionEvent.observe(this) { event ->
+            if (event != null) {
+                val (killedPlayer, fatalPos) = event
+                Toast.makeText(this, "P${killedPlayer.id} CRUSHED!", Toast.LENGTH_SHORT).show()
+                val streamId = soundManager.playSlideBack()
+
+                triggerPopVideo(R.raw.hammer_kill) {
+                    animateDeathSlideSmooth(killedPlayer, fatalPos, streamId)
+                }
+            }
+        }
+
+        viewModel.gameOver.observe(this) { isOver ->
+            if (isOver) {
+                soundManager.playWin()
+                triggerPopText("GAME OVER", 0xFFFFFFFF.toInt(), R.anim.pop_zoom_fade)
+            }
+        }
+
+        viewModel.pacmanMoveResult.observe(this) { result ->
+            if (result is GameEngine.PacmanResult.Move) {
+                animatePacmanMovement(result)
+            } else {
+                viewModel.onPacmanMoveFinished(0)
+            }
+        }
+    }
+
+    private fun updateScreenState(state: GameViewModel.GameState) {
+        setupLayout.visibility = View.GONE
+        gameOverLayout.visibility = View.GONE
+        pauseLayout.visibility = View.GONE
+
+        when (state) {
+            GameViewModel.GameState.MENU -> {
+                // Show player select setup immediately
+                setupLayout.visibility = View.VISIBLE
+                soundManager.startMenuMusic()
+            }
+            GameViewModel.GameState.PLAYING -> {
+                soundManager.stopMenuMusic()
+                val count = viewModel.players.value?.size ?: 2
+                findViewById<View>(R.id.layout_p3).visibility = if (count >= 3) View.VISIBLE else View.GONE
+                findViewById<View>(R.id.layout_p4).visibility = if (count >= 4) View.VISIBLE else View.GONE
+            }
+            GameViewModel.GameState.PAUSED -> {
+                pauseLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic()
+            }
+            GameViewModel.GameState.GAME_OVER -> {
+                gameOverLayout.visibility = View.VISIBLE
+                soundManager.stopMenuMusic()
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        soundManager.pauseMusic()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (viewModel.gameState.value == GameViewModel.GameState.MENU) {
+            soundManager.resumeMusic()
+        }
+    }
+
+    private fun animatePacmanMovement(result: GameEngine.PacmanResult.Move) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+
+            for (stepPos in result.path) {
+                activePlayer.pacmanPosition = stepPos
+                adapter.updatePlayers(players)
+                soundManager.playPacmanMove()
+                delay(100)
+            }
+
+            if (result.eventType != GameEngine.PacmanEvent.NORMAL) {
+                delay(200)
+                when (result.eventType) {
+                    GameEngine.PacmanEvent.SNAKE_BITE -> {
+                        soundManager.playFastFlash()
+                        triggerPopImage(R.drawable.pacman_snake_bite)
+                        delay(1500)
+                    }
+                    GameEngine.PacmanEvent.LADDER_CLIMB -> {
+                        val videoRes = when(activePlayer.id) {
+                            1 -> R.raw.video_ladder_p1
+                            2 -> R.raw.video_ladder_p2
+                            3 -> R.raw.video_ladder_p3
+                            4 -> R.raw.video_ladder_p4
+                            else -> R.raw.video_ladder_p1
+                        }
+                        suspendCancellableCoroutine<Unit> { cont ->
+                            triggerPopVideo(videoRes) { cont.resume(Unit) }
+                        }
+                    }
+                    else -> {}
+                }
+            }
+            delay(200)
+            viewModel.onPacmanMoveFinished(result.finalPos)
+        }
+    }
+
+    private fun animateDeathSlideSmooth(player: Player, startPos: Int, soundStreamId: Int) {
+        lifecycleScope.launch {
+            val stepSize = 2
+            var currentPos = startPos
+            while (currentPos > 1) {
+                val oldPos = currentPos
+                currentPos -= stepSize
+                if (currentPos < 1) currentPos = 1
+                player.currentPosition = currentPos
+                val oldIndex = getAdapterPositionForSquare(oldPos)
+                val newIndex = getAdapterPositionForSquare(currentPos)
+                adapter.notifyItemChanged(oldIndex)
+                adapter.notifyItemChanged(newIndex)
+                delay(100)
+            }
+            soundManager.stop(soundStreamId)
+            player.currentPosition = 1
+            adapter.notifyDataSetChanged()
+            viewModel.finalizeKill(player.id)
+        }
+    }
+
+    private fun animateHoppingMovement(stepsToMove: Int) {
+        lifecycleScope.launch {
+            val players = viewModel.players.value ?: return@launch
+            val activeId = viewModel.activePlayerId.value ?: return@launch
+            val activePlayer = players.find { it.id == activeId } ?: return@launch
+            val moveResult = viewModel.lastMoveResult.value
+
+            if (moveResult is GameEngine.MoveResult.Stay) {
+                Toast.makeText(this@SnaldActivity, "🚫 Overshot!", Toast.LENGTH_SHORT).show()
+                delay(500)
+                isAnimatingMove = false
+                viewModel.onPlayerMoveFinished(activePlayer.currentPosition)
+                return@launch
+            }
+
+            for (i in 1..stepsToMove) {
+                currentVisualPosition++
+                activePlayer.currentPosition = currentVisualPosition
+                adapter.updatePlayers(players)
+                soundManager.playHop()
+                delay(200)
+            }
+
+            var finalPos = currentVisualPosition
+
+            if (moveResult != null) {
+                if (moveResult is GameEngine.MoveResult.SnakeBite || moveResult is GameEngine.MoveResult.LadderClimb) {
+                    delay(300)
+                    handleMoveResult(moveResult)
+                    delay(1000)
+                    if (moveResult is GameEngine.MoveResult.SnakeBite) finalPos = moveResult.tail
+                    if (moveResult is GameEngine.MoveResult.LadderClimb) finalPos = moveResult.top
+                    animateSlide(currentVisualPosition, finalPos, activePlayer.color)
+                } else {
+                    handleMoveResult(moveResult)
+                    if (moveResult is GameEngine.MoveResult.StarUsed) delay(3600) else delay(500)
+                }
+            }
+
+            activePlayer.currentPosition = finalPos
+            adapter.updatePlayers(players)
+            isAnimatingMove = false
+            viewModel.onPlayerMoveFinished(finalPos)
+        }
+    }
+
+    private fun updateStatusText(playerId: Int) {
+        statusText.text = "Player $playerId's Turn"
+        val color = when(playerId) {
+            1 -> 0xFFFF0000.toInt()
+            2 -> 0xFF0000FF.toInt()
+            3 -> 0xFF00FF00.toInt()
+            4 -> 0xFFFFFF00.toInt()
+            else -> 0xFFFFFFFF.toInt()
+        }
+        statusText.setTextColor(color)
+    }
+
+    private fun highlightActiveDice(activeId: Int) {
+        diceViews.forEach { (id, view) ->
+            if (id == activeId) {
+                view.alpha = 1.0f
+                view.animate().scaleX(1.2f).scaleY(1.2f).setDuration(300).start()
+            } else {
+                view.alpha = 0.5f
+                view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(300).start()
+            }
+        }
+    }
+
+    private fun resetDiceOpacity() { diceViews.values.forEach { it.alpha = 0.5f } }
+
+    private fun updateDiceImage(view: ImageView, dice: Int) {
+        val resId = when (dice) {
+            1 -> R.drawable.dice_1
+            2 -> R.drawable.dice_2
+            3 -> R.drawable.dice_3
+            4 -> R.drawable.dice_4
+            5 -> R.drawable.dice_5
+            else -> R.drawable.dice_6
+        }
+        view.setImageResource(resId)
+    }
+
+    private fun getAdapterPositionForSquare(squareNumber: Int): Int {
+        if (squareNumber < 1 || squareNumber > 100) return 0
+        val bottomUpRow = (squareNumber - 1) / 10
+        val col = if (bottomUpRow % 2 == 0) (squareNumber - 1) % 10 else 9 - ((squareNumber - 1) % 10)
+        val row = 9 - bottomUpRow
+        return (row * 10) + col
+    }
+
+    private suspend fun animateSlide(startSquare: Int, endSquare: Int, color: Int) = suspendCancellableCoroutine<Unit> { continuation ->
+        val startIndex = getAdapterPositionForSquare(startSquare)
+        val endIndex = getAdapterPositionForSquare(endSquare)
+        val startView = recyclerBoard.layoutManager?.findViewByPosition(startIndex)
+        val endView = recyclerBoard.layoutManager?.findViewByPosition(endIndex)
+
+        if (startView != null && endView != null) {
+            val startCoords = IntArray(2)
+            val endCoords = IntArray(2)
+            val parentCoords = IntArray(2)
+            startView.getLocationInWindow(startCoords)
+            endView.getLocationInWindow(endCoords)
+            findViewById<View>(R.id.overlay_container).getLocationInWindow(parentCoords)
+
+            floatingToken.setColorFilter(color)
+            floatingToken.translationX = (startCoords[0] - parentCoords[0]).toFloat()
+            floatingToken.translationY = (startCoords[1] - parentCoords[1]).toFloat()
+            floatingToken.visibility = View.VISIBLE
+
+            floatingToken.animate()
+                .translationX((endCoords[0] - parentCoords[0]).toFloat())
+                .translationY((endCoords[1] - parentCoords[1]).toFloat())
+                .setDuration(1200)
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        floatingToken.visibility = View.GONE
+                        continuation.resume(Unit)
+                    }
+                }).start()
+        } else {
+            continuation.resume(Unit)
+        }
+    }
+
+    private fun handleMoveResult(result: GameEngine.MoveResult?) {
+        if (result == null) return
+        when (result) {
+            is GameEngine.MoveResult.SnakeBite -> {
+                soundManager.playSnakeBite()
+                triggerPopImage(R.drawable.img_snake_pop)
+            }
+            is GameEngine.MoveResult.LadderClimb -> {
+                soundManager.playLadderClimb()
+                triggerPopText("YAY!", 0xFF4CAF50.toInt(), R.anim.pop_zoom_fade)
+            }
+            is GameEngine.MoveResult.StarCollected -> {
+                soundManager.playStarCollect()
+                triggerPopText("POWER!", 0xFFFFD700.toInt(), R.anim.pop_flash_3x)
+            }
+            is GameEngine.MoveResult.PacmanSpawned -> {
+                soundManager.playPacmanEntry()
+                triggerPopText("HUNTER AWAKENS!", 0xFFFF0000.toInt(), R.anim.pop_zoom_fade)
+            }
+            is GameEngine.MoveResult.StarUsed -> {
+                soundManager.playStarUsed()
+                triggerPopImage(R.drawable.img_devil_smile)
+            }
+            is GameEngine.MoveResult.Win -> {
+                soundManager.playWin()
+                triggerPopText("WINNER!", 0xFFFFD700.toInt(), R.anim.pop_zoom_fade)
+            }
+            else -> {}
+        }
+    }
+
+    private fun triggerPopVideo(videoResId: Int, onComplete: () -> Unit) {
+        try {
+            val uri = Uri.parse("android.resource://$packageName/$videoResId")
+            videoOverlayPop.setVideoURI(uri)
+            videoOverlayPop.setZOrderOnTop(true)
+            videoOverlayPop.visibility = View.VISIBLE
+            videoOverlayPop.setOnCompletionListener {
+                videoOverlayPop.visibility = View.GONE
+                onComplete()
+            }
+            videoOverlayPop.start()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            videoOverlayPop.visibility = View.GONE
+            onComplete()
+        }
+    }
+
+    private fun triggerPopText(text: String, color: Int, animRes: Int) {
+        textOverlayPop.text = text
+        textOverlayPop.setTextColor(color)
+        textOverlayPop.visibility = View.VISIBLE
+        val anim = AnimationUtils.loadAnimation(this, animRes)
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                textOverlayPop.visibility = View.GONE
+            }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+        })
+        textOverlayPop.startAnimation(anim)
+    }
+
+    private fun triggerPopImage(drawableRes: Int) {
+        imgOverlayPop.setImageResource(drawableRes)
+        imgOverlayPop.visibility = View.VISIBLE
+        val anim = AnimationUtils.loadAnimation(this, R.anim.pop_image_fade)
+        anim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+            override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                imgOverlayPop.visibility = View.GONE
+            }
+            override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+            override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+        })
+        imgOverlayPop.startAnimation(anim)
+    }
+}
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\activity_ludo.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/layout_ludo_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <LinearLayout
+        android:id="@+id/layout_strategy_bar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#88000000"
+        android:padding="6dp"
+        android:layout_marginTop="12dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toEndOf="@id/layout_ludo_p1"
+        app:layout_constraintEnd_toStartOf="@id/layout_ludo_p2">
+        <ProgressBar android:id="@+id/progress_p1" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#FF0000" android:max="100"/>
+        <ProgressBar android:id="@+id/progress_p2" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#00FF00" android:max="100"/>
+        <ProgressBar android:id="@+id/progress_p3" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#00CED1" android:max="100" android:visibility="gone"/>
+        <ProgressBar android:id="@+id/progress_p4" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp" android:progressTint="#FFFF00" android:max="100" android:visibility="gone"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_ludo_p1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p1" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
+        <TextView android:text="P1" android:textColor="#FF0000" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_ludo_p2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p2" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
+        <TextView android:text="P2" android:textColor="#00FF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_ludo_p4"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P4" android:textColor="#FFFF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p4" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_ludo_p3"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P3" android:textColor="#00CED1" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p3" android:layout_width="55dp" android:layout_height="55dp" android:src="@drawable/dice_1"/>
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/img_ludo_board"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:scaleType="fitCenter"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layout_dashboard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="8dp"
+        android:layout_marginHorizontal="16dp"
+        android:weightSum="2"
+        app:layout_constraintBottom_toTopOf="@id/img_ludo_board"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="100dp"
+            android:layout_weight="1"
+            android:background="#A61A1A1A"
+            android:orientation="vertical"
+            android:paddingHorizontal="12dp"
+            android:gravity="center_vertical"
+            android:layout_marginEnd="8dp">
+            <TextView android:text="MATCH STATS" android:textColor="#FFF" android:textStyle="bold" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="4dp"/>
+            <TextView android:id="@+id/text_dash_p1" android:text="P1 ⚔️0 💀0 🎲0" android:textColor="#FF0000" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <TextView android:id="@+id/text_dash_p2" android:text="P2 ⚔️0 💀0 🎲0" android:textColor="#00FF00" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <TextView android:id="@+id/text_dash_p3" android:text="P3 ⚔️0 💀0 🎲0" android:textColor="#00CED1" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone"/>
+            <TextView android:id="@+id/text_dash_p4" android:text="P4 ⚔️0 💀0 🎲0" android:textColor="#FFFF00" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="100dp"
+            android:layout_weight="1"
+            android:background="#A61A1A1A"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_marginStart="8dp">
+            <TextView android:text="SAFE ZONE SHIFT IN" android:textColor="#DDFFFFFF" android:textSize="10sp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="4dp"/>
+            <TextView android:id="@+id/text_dash_timer" android:text="00:30" android:textColor="#FFF" android:textSize="32sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/anim_ludo_neon_overlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:lottie_rawRes="@raw/anim_neon_glow"
+        app:lottie_loop="true"
+        app:lottie_autoPlay="false"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintTop_toTopOf="@id/img_ludo_board"
+        app:layout_constraintBottom_toBottomOf="@id/img_ludo_board"
+        app:layout_constraintStart_toStartOf="@id/img_ludo_board"
+        app:layout_constraintEnd_toEndOf="@id/img_ludo_board" />
+
+    <FrameLayout
+        android:id="@+id/overlay_ludo_stars"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:elevation="9dp"
+        app:layout_constraintTop_toTopOf="@id/img_ludo_board"
+        app:layout_constraintBottom_toBottomOf="@id/img_ludo_board"
+        app:layout_constraintStart_toStartOf="@id/img_ludo_board"
+        app:layout_constraintEnd_toEndOf="@id/img_ludo_board" />
+
+    <FrameLayout
+        android:id="@+id/overlay_ludo_tokens"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:elevation="10dp"
+        app:layout_constraintTop_toTopOf="@id/img_ludo_board"
+        app:layout_constraintBottom_toBottomOf="@id/img_ludo_board"
+        app:layout_constraintStart_toStartOf="@id/img_ludo_board"
+        app:layout_constraintEnd_toEndOf="@id/img_ludo_board" />
+
+    <TextView
+        android:id="@+id/text_ludo_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:background="#AA000000"
+        android:padding="10dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:id="@+id/text_ludo_victory_pop"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="WINNER!"
+        android:textColor="#FFFFFF"
+        android:textSize="40sp"
+        android:textStyle="bold"
+        android:background="#AA000000"
+        android:padding="20dp"
+        android:visibility="gone"
+        android:elevation="150dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layout_ludo_setup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F21A1A1A"
+        android:orientation="vertical"
+        android:elevation="200dp"
+        android:visibility="visible">
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="260dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_gravity="center"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@android:color/transparent">
+
+            <VideoView
+                android:id="@+id/video_setup_top"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center" />
+        </androidx.cardview.widget.CardView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingVertical="20dp">
+
+            <TextView
+                android:id="@+id/text_setup_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LUDO MATCH"
+                android:textColor="#FFF"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="50dp"/>
+
+            <LinearLayout
+                android:id="@+id/group_setup_theme"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_theme_classic" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="CLASSIC BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_theme_wood" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="WOODEN BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_theme_neon" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="NEON BOARD" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_players"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_ludo_2p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_ludo_3p" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="3 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_ludo_4p" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 PLAYERS" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_bots"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_bots_0" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="0 BOTS (ALL HUMAN)" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_1" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="1 AI BOT" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_2" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 AI BOTS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_bots_3" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="3 AI BOTS" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/group_setup_tokens"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:visibility="gone">
+                <Button android:id="@+id/btn_tokens_1" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="1 TOKEN (QUICK)" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_tokens_2" android:layout_width="260dp" android:layout_height="65dp" android:layout_marginBottom="20dp" android:background="@drawable/bg_capsule_dark" android:text="2 TOKENS" android:textColor="#FFF" app:backgroundTint="@null" />
+                <Button android:id="@+id/btn_tokens_4" android:layout_width="260dp" android:layout_height="65dp" android:background="@drawable/bg_capsule_dark" android:text="4 TOKENS (FULL)" android:textColor="#FFF" app:backgroundTint="@null" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <androidx.cardview.widget.CardView
+            android:layout_width="260dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_gravity="center"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="24dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@android:color/transparent">
+
+            <VideoView
+                android:id="@+id/video_setup_bottom"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center" />
+        </androidx.cardview.widget.CardView>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_game_over_ludo"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#D9000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="200dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="30dp"
+            android:background="@drawable/bg_panel_glossy"
+            android:elevation="50dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MATCH RESULTS"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:shadowColor="#000000"
+                android:shadowDx="0"
+                android:shadowDy="5"
+                android:shadowRadius="10"
+                android:layout_marginBottom="24dp" />
+
+            <TextView
+                android:id="@+id/text_ludo_rankings"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#00CED1"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:lineSpacingExtra="8dp"
+                android:layout_marginBottom="32dp" />
+
+            <Button
+                android:id="@+id/btn_ludo_hub"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:text="EXIT TO HUB"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:background="@drawable/bg_capsule_dark"
+                app:backgroundTint="@null"
+                android:elevation="10dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\activity_main.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#8D6E63">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_board"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@drawable/full_board_bg"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintVertical_bias="0.5"
+        tools:itemCount="100"
+        tools:spanCount="10" />
+
+    <FrameLayout
+        android:id="@+id/overlay_container"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:elevation="20dp"
+        app:layout_constraintTop_toTopOf="@id/recycler_board"
+        app:layout_constraintBottom_toBottomOf="@id/recycler_board"
+        app:layout_constraintStart_toStartOf="@id/recycler_board"
+        app:layout_constraintEnd_toEndOf="@id/recycler_board">
+
+        <ImageView
+            android:id="@+id/floating_token"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:src="@drawable/img_token_player"
+            android:visibility="gone"/>
+
+        <TextView
+            android:id="@+id/text_overlay_pop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            android:textSize="70sp"
+            android:textColor="#FFF"
+            android:textStyle="bold"
+            android:shadowColor="#000000"
+            android:shadowDx="0"
+            android:shadowDy="0"
+            android:shadowRadius="20"/>
+
+        <ImageView
+            android:id="@+id/img_overlay_pop"
+            android:layout_width="380dp"
+            android:layout_height="380dp"
+            android:layout_gravity="center"
+            android:visibility="gone"/>
+
+        <VideoView
+            android:id="@+id/video_overlay_pop"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p3"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p3" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
+        <TextView android:text="P3" android:textColor="#00FF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p4"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+        <ImageView android:id="@+id/dice_p4" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
+        <TextView android:text="P4" android:textColor="#FFFF00" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P1" android:textColor="#FF0000" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p1" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_p2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+        <TextView android:text="P2" android:textColor="#0000FF" android:textStyle="bold" android:layout_gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/dice_p2" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/dice_1" android:scaleType="fitCenter"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/text_main_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Waiting..."
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:background="#88000000"
+        android:padding="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp"/>
+
+    <LinearLayout
+        android:id="@+id/layout_setup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="30dp"
+        android:visibility="gone"
+        android:background="#A68B7D">
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="40dp"
+            android:background="@drawable/bg_panel_glossy">
+
+            <TextView
+                android:text="SNALD"
+                android:textSize="50sp"
+                android:textStyle="bold"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="30dp"
+                android:textColor="#FFFFFF"
+                android:shadowColor="#000000"
+                android:shadowRadius="10"/>
+
+            <TextView
+                android:text="Select Players"
+                android:textSize="18sp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="20dp"
+                android:textColor="#DDFFFFFF"/>
+
+            <Button
+                android:id="@+id/btn_2_players"
+                android:text="2 Players"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:textColor="#FFF"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"/>
+
+            <Button
+                android:id="@+id/btn_3_players"
+                android:text="3 Players"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:textColor="#FFF"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"/>
+
+            <Button
+                android:id="@+id/btn_4_players"
+                android:text="4 Players"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:textColor="#FFF"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_pause"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="35dp"
+        android:visibility="gone"
+        android:background="#AA000000">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="40dp"
+            android:background="@drawable/bg_panel_glossy">
+
+            <TextView
+                android:text="PAUSED"
+                android:textSize="40sp"
+                android:textStyle="bold"
+                android:textColor="#FFF"
+                android:layout_marginBottom="30dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <Button
+                android:id="@+id/btn_resume"
+                android:text="RESUME"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/btn_quit"
+                android:text="QUIT TO MENU"
+                android:layout_width="180dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                app:backgroundTint="@null"
+                android:textColor="#FFF"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_game_over"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#99000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="40dp"
+        android:visibility="gone">
+        <TextView android:text="GAME OVER!" android:textColor="#FFF" android:textSize="50sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="30dp"/>
+        <Button android:id="@+id/btn_restart" android:text="PLAY AGAIN" android:background="@drawable/bg_button_glossy" app:backgroundTint="@null" android:textColor="#FFF" android:layout_width="200dp" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\activity_menu.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#A68B7D">
+
+    <LinearLayout
+        android:id="@+id/layout_game_selection"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:elevation="30dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_panel_glossy"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="40dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="30dp"
+                android:shadowColor="#000000"
+                android:shadowRadius="10"
+                android:text="BYTEMANTIS HUB"
+                android:textColor="#FFFFFF"
+                android:textSize="34sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="20dp"
+                android:text="Select Game"
+                android:textColor="#DDFFFFFF"
+                android:textSize="18sp" />
+
+            <Button
+                android:id="@+id/btn_play_snald"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_button_glossy"
+                android:text="S.N.A.L.D"
+                android:textColor="#FFF"
+                app:backgroundTint="@null" />
+
+            <Button
+                android:id="@+id/btn_play_ludo"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_glossy"
+                android:text="LUDO"
+                android:textColor="#FFF"
+                app:backgroundTint="@null" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/layout_splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#212121"
+        android:elevation="50dp"
+        android:visibility="visible">
+
+        <ImageView
+            android:layout_width="200dp"
+            android:layout_height="200dp"
+            android:layout_gravity="center"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_launcher_foreground" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="BYTEMANTIS"
+            android:textColor="#FFFFFF"
+            android:textSize="36sp"
+            android:textStyle="bold"
+            android:translationY="120dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="32dp"
+            android:text="Game Hub"
+            android:textColor="#88FFFFFF"
+            android:textSize="14sp" />
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\res\layout\item_square.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="2dp">
+
+    <TextView
+        android:id="@+id/text_square_number"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:textColor="#000000"
+        android:textSize="10sp" />
+
+    <ImageView
+        android:id="@+id/token_center"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:layout_gravity="center"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_1"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_2"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_3"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/token_4"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="2dp"
+        android:src="@drawable/img_token_player"
+        android:visibility="gone" />
+
+</FrameLayout>
+
+
+################################################################
+FILE PATH: \app\src\main\AndroidManifest.xml
+################################################################
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SNALD">
+
+        <activity
+            android:name=".MenuActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".snaldgame.SnaldActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ludogame.LudoActivity"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

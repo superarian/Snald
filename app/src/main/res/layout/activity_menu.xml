@@ -54,10 +54,31 @@
                 android:id="@+id/btn_play_ludo"
                 android:layout_width="200dp"
                 android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
                 android:background="@drawable/bg_button_glossy"
                 android:text="LUDO"
                 android:textColor="#FFF"
                 app:backgroundTint="@null" />
+
+            <Button
+                android:id="@+id/btn_go_pro"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:background="@drawable/bg_button_glossy"
+                android:text="GO PRO 👑"
+                android:textColor="#FFD700"
+                app:backgroundTint="@null" />
+
+            <TextView
+                android:id="@+id/btn_logout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LOGOUT"
+                android:textColor="#88FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:padding="8dp" />
         </LinearLayout>
     </LinearLayout>
 

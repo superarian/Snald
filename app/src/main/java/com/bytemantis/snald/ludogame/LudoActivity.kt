@@ -1,6 +1,8 @@
 package com.bytemantis.snald.ludogame
 
+import android.content.Intent
 import android.content.Context
+import com.bytemantis.snald.PurchaseActivity
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -23,6 +25,7 @@ import kotlin.math.min
 class LudoActivity : AppCompatActivity() {
 
     private val viewModel: LudoViewModel by viewModels()
+    private var isPro = false
     private lateinit var soundManager: SoundManager
 
     private lateinit var boardImage: ImageView
@@ -91,6 +94,8 @@ class LudoActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_ludo)
         soundManager = SoundManager(this)
+
+        isPro = intent.getBooleanExtra("IS_PRO", false)
 
         allTokenViews.clear()
         repeat(4) { allTokenViews.add(mutableListOf()) }
@@ -222,8 +227,14 @@ class LudoActivity : AppCompatActivity() {
         btnBots3.setOnClickListener { viewModel.selectBotCount(3) }
 
         findViewById<Button>(R.id.btn_tokens_1).setOnClickListener { startOrHostGame(1) }
-        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener { startOrHostGame(2) }
-        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener { startOrHostGame(4) }
+        findViewById<Button>(R.id.btn_tokens_2).setOnClickListener {
+            if (isPro) startOrHostGame(2)
+            else showProDialog("2 Tokens Mode")
+        }
+        findViewById<Button>(R.id.btn_tokens_4).setOnClickListener {
+            if (isPro) startOrHostGame(4)
+            else showProDialog("4 Tokens Full Match")
+        }
 
         boardImage.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
@@ -672,5 +683,17 @@ class LudoActivity : AppCompatActivity() {
             playRandomSetupVideos()
             soundManager.resumeMusic()
         }
+    }
+
+    private fun showProDialog(featureName: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Pro Feature 👑")
+            .setMessage("$featureName is a PRO feature. Upgrade to SNALD Pro to unlock premium boards and gameplay features!")
+            .setPositiveButton("Go Pro") { _, _ ->
+                val intent = Intent(this, PurchaseActivity::class.java)
+                startActivity(intent)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 }

@@ -12,8 +12,10 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import android.widget.LinearLayout
+import android.content.Intent
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -29,6 +31,7 @@ import kotlin.coroutines.resume
 class SnaldActivity : AppCompatActivity() {
 
     private val viewModel: GameViewModel by viewModels()
+    private var isPro = false
     private val adapter = BoardAdapter()
     private lateinit var soundManager: SoundManager
 
@@ -54,6 +57,7 @@ class SnaldActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // We still use activity_main.xml as the layout for Snald for now
         setContentView(R.layout.activity_main)
+        isPro = intent.getBooleanExtra("IS_PRO", false)
         soundManager = SoundManager(this)
 
         setupUI()
